@@ -4,12 +4,30 @@ import {
   FinishedClip,
   Job,
   JobParams,
+  ManualClipSegment,
   SubtitleTrack,
   SubtitleWord,
   TimelineData,
 } from "./types";
 
 const API_BASE = "";
+
+export function getYoutubeThumbnail(videoId?: string | null, sourceUrl?: string | null): string | null {
+  if (videoId && videoId.length === 11) {
+    return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  }
+  if (sourceUrl) {
+    const match = sourceUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|live\/|shorts\/))([a-zA-Z0-9_-]{11})/);
+    if (match && match[1]) {
+      return `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`;
+    }
+  }
+  return null;
+}
+
+export function getClipThumbUrl(clipId: string): string {
+  return `${API_BASE}/api/clips/${clipId}/thumb`;
+}
 
 export async function createJob(
   sourceUrl: string,
@@ -38,8 +56,8 @@ export async function createJob(
 
 export async function createManualJob(
   sourceUrl: string,
-  startTime: string | number,
-  endTime: string | number,
+  clipsOrStart: string | number | ManualClipSegment[],
+  endTime?: string | number,
   options?: {
     title?: string;
     reframe_mode?: string;
@@ -48,16 +66,22 @@ export async function createManualJob(
     language?: string;
   }
 ): Promise<Job> {
-  const payload = {
+  const payload: any = {
     source_url: sourceUrl,
-    start_time: startTime,
-    end_time: endTime,
-    title: options?.title || undefined,
     reframe_mode: options?.reframe_mode || "blur",
     subtitle_style: options?.subtitle_style || "none",
     subtitle_position: options?.subtitle_position || "bottom",
     language: options?.language || "id",
   };
+
+  if (Array.isArray(clipsOrStart)) {
+    payload.clips = clipsOrStart;
+  } else {
+    payload.start_time = clipsOrStart;
+    payload.end_time = endTime;
+    payload.title = options?.title || undefined;
+  }
+
   const res = await fetch(`${API_BASE}/api/jobs/manual`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -65,6 +89,33 @@ export async function createManualJob(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Failed to create manual clip job" }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function addManualClipsToJob(
+  jobId: string,
+  clips: ManualClipSegment[],
+  options?: {
+    reframe_mode?: string;
+    subtitle_style?: string;
+    subtitle_position?: string;
+  }
+): Promise<{ status: string; job_id: string; clips_count: number; message: string }> {
+  const payload = {
+    clips,
+    reframe_mode: options?.reframe_mode,
+    subtitle_style: options?.subtitle_style,
+    subtitle_position: options?.subtitle_position,
+  };
+  const res = await fetch(`${API_BASE}/api/jobs/${jobId}/manual-clips`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Failed to add manual clips to job" }));
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
   return res.json();

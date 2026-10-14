@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { JobParams } from "../types";
-import { ArrowRight, Film, Scissors, Sparkles, Zap } from "lucide-react";
+import { JobParams, ManualClipSegment } from "../types";
+import { ArrowRight, Film, Plus, Scissors, Sparkles, Trash2, Zap } from "lucide-react";
 
 interface JobFormProps {
   onSubmit: (
@@ -11,7 +11,7 @@ interface JobFormProps {
   ) => Promise<void>;
   onSubmitManual?: (
     url: string,
-    startTime: string,
+    clipsOrStart: string | ManualClipSegment[],
     endTime: string,
     options: {
       title?: string;
@@ -24,7 +24,14 @@ interface JobFormProps {
   loading: boolean;
 }
 
-function parseTimestamp(ts: string): number | null {
+export interface ManualClipRow {
+  id: string;
+  startTime: string;
+  endTime: string;
+  title: string;
+}
+
+export function parseTimestamp(ts: string): number | null {
   ts = ts.trim();
   if (!ts) return null;
   if (ts.includes(":")) {
@@ -44,7 +51,7 @@ function parseTimestamp(ts: string): number | null {
   return isNaN(n) ? null : n;
 }
 
-function calculateDurationString(startStr: string, endStr: string): string | null {
+export function calculateDurationString(startStr: string, endStr: string): string | null {
   const s = parseTimestamp(startStr);
   const e = parseTimestamp(endStr);
   if (s !== null && e !== null && e > s) {
@@ -71,12 +78,33 @@ export const JobForm: React.FC<JobFormProps> = ({
   const [subtitlePosition, setSubtitlePosition] = useState<"bottom" | "top">("bottom");
   const [error, setError] = useState<string | null>(null);
 
-  // Manual clip state
-  const [manualStartTime, setManualStartTime] = useState("");
-  const [manualEndTime, setManualEndTime] = useState("");
-  const [manualTitle, setManualTitle] = useState("");
+  // Multi manual clip state
+  const [manualClips, setManualClips] = useState<ManualClipRow[]>([
+    { id: "row-1", startTime: "", endTime: "", title: "" },
+  ]);
 
-  const manualDurationStr = calculateDurationString(manualStartTime, manualEndTime);
+  const handleAddClipRow = () => {
+    setManualClips((prev) => [
+      ...prev,
+      {
+        id: `row-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        startTime: "",
+        endTime: "",
+        title: "",
+      },
+    ]);
+  };
+
+  const handleRemoveClipRow = (id: string) => {
+    if (manualClips.length <= 1) return;
+    setManualClips((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const handleUpdateClipRow = (id: string, field: keyof ManualClipRow, val: string) => {
+    setManualClips((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, [field]: val } : r))
+    );
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,24 +119,32 @@ export const JobForm: React.FC<JobFormProps> = ({
     }
 
     if (mode === "manual") {
-      const startSec = parseTimestamp(manualStartTime);
-      const endSec = parseTimestamp(manualEndTime);
-      if (startSec === null || isNaN(startSec) || startSec < 0) {
-        setError("Format waktu mulai tidak valid. Contoh: 12:35 atau 755.");
-        return;
-      }
-      if (endSec === null || isNaN(endSec) || endSec <= startSec) {
-        setError("Waktu selesai harus lebih besar dari waktu mulai. Contoh: 14:20.");
-        return;
-      }
-      if (endSec - startSec < 1.0) {
-        setError("Durasi klip minimal 1 detik.");
-        return;
+      const segments: ManualClipSegment[] = [];
+      for (let i = 0; i < manualClips.length; i++) {
+        const row = manualClips[i];
+        const startSec = parseTimestamp(row.startTime);
+        const endSec = parseTimestamp(row.endTime);
+        if (startSec === null || isNaN(startSec) || startSec < 0) {
+          setError(`Klip #${i + 1}: Format waktu mulai tidak valid. Contoh: 12:35 atau 755.`);
+          return;
+        }
+        if (endSec === null || isNaN(endSec) || endSec <= startSec) {
+          setError(`Klip #${i + 1}: Waktu selesai harus lebih besar dari waktu mulai. Contoh: 14:20.`);
+          return;
+        }
+        if (endSec - startSec < 1.0) {
+          setError(`Klip #${i + 1}: Durasi klip minimal 1 detik.`);
+          return;
+        }
+        segments.push({
+          start_time: row.startTime.trim(),
+          end_time: row.endTime.trim(),
+          title: row.title.trim() || undefined,
+        });
       }
 
       if (onSubmitManual) {
-        onSubmitManual(trimmed, manualStartTime, manualEndTime, {
-          title: manualTitle.trim() || undefined,
+        onSubmitManual(trimmed, segments, "", {
           reframe_mode: reframeMode,
           subtitle_style: subtitleStyle,
           subtitle_position: subtitlePosition,
@@ -117,9 +153,7 @@ export const JobForm: React.FC<JobFormProps> = ({
       } else {
         onSubmit(trimmed, "manual", language, {
           manual: true,
-          start_time: manualStartTime,
-          end_time: manualEndTime,
-          title: manualTitle.trim() || undefined,
+          clips: segments,
           reframe_mode: reframeMode,
           subtitle_style: subtitleStyle,
           subtitle_position: subtitlePosition,
@@ -244,7 +278,7 @@ export const JobForm: React.FC<JobFormProps> = ({
             ) : (
               <>
                 <Zap className="w-4 h-4 fill-current" />
-                <span>POTONG SEKARANG</span>
+                <span>POTONG SEKARANG ({manualClips.length} KLIP)</span>
               </>
             )}
           </button>
@@ -360,49 +394,108 @@ export const JobForm: React.FC<JobFormProps> = ({
             </div>
           </div>
         ) : (
-          /* Manual Clip Options Bar */
+          /* Multi-Clip Manual Options Bar */
           <div className="p-5 bg-card/30 text-xs flex flex-col gap-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-              {/* Start Timestamp */}
-              <div>
-                <label className="block text-muted uppercase font-bold tracking-wider mb-1.5">
-                  Timestamp Mulai
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={manualStartTime}
-                  onChange={(e) => setManualStartTime(e.target.value)}
-                  placeholder="Contoh: 12:35 atau 755"
-                  className="w-full bg-bg border border-line py-1.5 px-2.5 text-copy font-mono focus:border-action focus:outline-none"
-                />
-                <span className="text-[10px] text-muted mt-1 block">Format: MM:SS, HH:MM:SS, atau detik</span>
-              </div>
+            <div className="flex items-center justify-between border-b border-line pb-2">
+              <span className="font-extrabold uppercase tracking-wider text-copy flex items-center gap-2">
+                <Scissors className="w-3.5 h-3.5 text-action" />
+                DAFTAR KLIP MANUAL ({manualClips.length} KLIP)
+              </span>
+              <span className="text-[11px] text-muted">
+                Bisa potong beberapa rentang menit sekaligus
+              </span>
+            </div>
 
-              {/* End Timestamp */}
-              <div>
-                <label className="block text-muted uppercase font-bold tracking-wider mb-1.5 flex items-center justify-between">
-                  <span>Timestamp Selesai</span>
-                  {manualDurationStr && (
-                    <span className="text-action font-mono text-[10px] bg-action/10 px-1 py-0.5 border border-action/20">
-                      {manualDurationStr}
-                    </span>
-                  )}
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={manualEndTime}
-                  onChange={(e) => setManualEndTime(e.target.value)}
-                  placeholder="Contoh: 14:20 atau 860"
-                  className="w-full bg-bg border border-line py-1.5 px-2.5 text-copy font-mono focus:border-action focus:outline-none"
-                />
-                <span className="text-[10px] text-muted mt-1 block">Format: MM:SS, HH:MM:SS, atau detik</span>
-              </div>
+            <div className="flex flex-col gap-2.5">
+              {manualClips.map((row, idx) => {
+                const durStr = calculateDurationString(row.startTime, row.endTime);
+                return (
+                  <div
+                    key={row.id}
+                    className="p-3 bg-bg border border-line flex flex-col md:flex-row items-stretch md:items-center gap-3 relative"
+                  >
+                    <div className="flex items-center justify-between md:justify-start gap-2 shrink-0">
+                      <span className="font-mono font-bold text-action text-xs bg-action/10 px-2 py-0.5 border border-action/30">
+                        #{idx + 1}
+                      </span>
+                    </div>
 
-              {/* Preset Subtitle */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 flex-1 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] text-muted uppercase font-bold tracking-wider mb-1">
+                          Mulai (MM:SS / Detik)
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={row.startTime}
+                          onChange={(e) => handleUpdateClipRow(row.id, "startTime", e.target.value)}
+                          placeholder="12:35 atau 755"
+                          className="w-full bg-card border border-line py-1 px-2 text-copy font-mono text-xs focus:border-action focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-muted uppercase font-bold tracking-wider mb-1 flex justify-between">
+                          <span>Selesai</span>
+                          {durStr && (
+                            <span className="text-action font-mono text-[9px] bg-action/10 px-1 border border-action/20">
+                              {durStr}
+                            </span>
+                          )}
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={row.endTime}
+                          onChange={(e) => handleUpdateClipRow(row.id, "endTime", e.target.value)}
+                          placeholder="14:20 atau 860"
+                          className="w-full bg-card border border-line py-1 px-2 text-copy font-mono text-xs focus:border-action focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2 md:col-span-1">
+                        <label className="block text-[10px] text-muted uppercase font-bold tracking-wider mb-1">
+                          Judul Klip (Opsional)
+                        </label>
+                        <input
+                          type="text"
+                          value={row.title}
+                          onChange={(e) => handleUpdateClipRow(row.id, "title", e.target.value)}
+                          placeholder="Contoh: Momen Boss Fight"
+                          className="w-full bg-card border border-line py-1 px-2 text-copy text-xs focus:border-action focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {manualClips.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveClipRow(row.id)}
+                        className="text-muted hover:text-err p-1.5 transition-colors self-end md:self-center"
+                        title="Hapus Baris Klip"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleAddClipRow}
+              className="py-2 px-3 border border-dashed border-action/50 hover:border-action bg-action/5 hover:bg-action/10 text-action text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ TAMBAH BARIS KLIP LAGI</span>
+            </button>
+
+            {/* Global Settings */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-line/60">
               <div>
-                <label className="block text-muted uppercase font-bold tracking-wider mb-1.5">
+                <label className="block text-muted uppercase font-bold tracking-wider mb-1">
                   Preset Subtitle
                 </label>
                 <select
@@ -419,12 +512,10 @@ export const JobForm: React.FC<JobFormProps> = ({
                   <option value="neon_glow">Neon Glow (Cyan/Magenta)</option>
                   <option value="minimal_clean">Minimal Clean (Putih Minimalis)</option>
                 </select>
-                <span className="text-[10px] text-muted mt-1 block">Pilih Tanpa Subtitle untuk rendering instan</span>
               </div>
 
-              {/* Subtitle Location Preset */}
               <div>
-                <label className="block text-muted uppercase font-bold tracking-wider mb-1.5">
+                <label className="block text-muted uppercase font-bold tracking-wider mb-1">
                   Lokasi Subtitle
                 </label>
                 <select
@@ -433,15 +524,13 @@ export const JobForm: React.FC<JobFormProps> = ({
                   disabled={loading || subtitleStyle === "none"}
                   className="w-full bg-bg border border-line py-1.5 px-2 text-copy focus:border-action focus:outline-none"
                 >
-                  <option value="bottom">Bawah (Y=1680)</option>
+                  <option value="bottom">Bawah (Y=1680 Standar)</option>
                   <option value="top">Atas (YT Shorts Safe Y=420)</option>
                 </select>
-                <span className="text-[10px] text-muted mt-1 block">Preset posisi awal di video 9:16</span>
               </div>
 
-              {/* Reframe Mode */}
               <div>
-                <label className="block text-muted uppercase font-bold tracking-wider mb-1.5">
+                <label className="block text-muted uppercase font-bold tracking-wider mb-1">
                   Reframe 9:16
                 </label>
                 <select
@@ -454,22 +543,7 @@ export const JobForm: React.FC<JobFormProps> = ({
                   <option value="center">Center Crop</option>
                   <option value="stacked">Stacked Cam/Game</option>
                 </select>
-                <span className="text-[10px] text-muted mt-1 block">Format video 1080x1920 Shorts/TikTok/Reels</span>
               </div>
-            </div>
-
-            {/* Optional Title */}
-            <div>
-              <label className="block text-muted uppercase font-bold tracking-wider mb-1.5">
-                Judul Klip (Opsional)
-              </label>
-              <input
-                type="text"
-                value={manualTitle}
-                onChange={(e) => setManualTitle(e.target.value)}
-                placeholder="Contoh: Momen Boss Fight Epik (kosongkan untuk judul otomatis)"
-                className="w-full bg-bg border border-line py-1.5 px-2.5 text-copy text-xs focus:border-action focus:outline-none"
-              />
             </div>
           </div>
         )}

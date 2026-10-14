@@ -445,6 +445,34 @@ async def stream_clip_video(
     )
 
 
+@router.get("/{clip_id}/thumb")
+async def stream_clip_thumb(
+    clip_id: str, db: aiosqlite.Connection = Depends(get_db)
+) -> FileResponse:
+    """Stream generated clip thumbnail image."""
+    async with db.execute("SELECT thumb_path FROM clips WHERE id = ?", (clip_id,)) as cursor:
+        row = await cursor.fetchone()
+        if not row or not row[0]:
+            async with db.execute(
+                "SELECT thumb_path FROM finished_clips WHERE clip_id = ?", (clip_id,)
+            ) as f_cur:
+                f_row = await f_cur.fetchone()
+                if f_row and f_row[0]:
+                    row = f_row
+                else:
+                    raise HTTPException(status_code=404, detail="Clip thumbnail not found")
+
+    thumb_path = Path(row[0])
+    if not thumb_path.exists():
+        raise HTTPException(status_code=404, detail="Thumbnail file missing on disk")
+
+    return FileResponse(
+        path=str(thumb_path),
+        media_type="image/jpeg",
+        filename=f"{clip_id}_thumb.jpg",
+    )
+
+
 @router.get("/{clip_id}/subtitles")
 async def get_clip_subtitles(
     clip_id: str, db: aiosqlite.Connection = Depends(get_db)

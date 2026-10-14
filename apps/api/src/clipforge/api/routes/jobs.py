@@ -20,11 +20,13 @@ from clipforge.db.connection import get_db
 from clipforge.jobs.engine import engine
 from clipforge.jobs.events import broadcaster
 from clipforge.jobs.models import (
+    AddManualClipsRequest,
     JobCreateRequest,
     JobEvent,
     JobResponse,
     JobStatus,
     ManualClipCreateRequest,
+    ManualClipItem,
     StageName,
 )
 from clipforge.jobs.pipeline import (
@@ -138,18 +140,18 @@ def parse_timestamp_to_seconds(ts: str | float | int) -> float:
     raise ValueError(f"Invalid timestamp format: '{ts}'. Use MM:SS, HH:MM:SS, or seconds.")
 
 
-async def _execute_manual_clip_pipeline(
+async def _execute_manual_clips_batch(
     job_id: str,
-    start_s: float,
-    end_s: float,
+    clip_items: list[tuple[float, float, str | None]],
     reframe_mode: str = "blur",
     subtitle_style: str = "none",
     subtitle_position: str = "bottom",
+    previous_status: str | None = None,
 ) -> None:
     """
-    Direct fast clip extraction pipeline for manual timestamps:
+    Direct fast clip extraction pipeline for one or multiple manual timestamp clips:
     - Bypasses AI highlight detection, LLM scoring, and auto-clipping.
-    - Directly extracts exact [start_s, end_s] segment.
+    - Directly extracts exact [start_s, end_s] segment for each clip item.
     - If subtitle_style is not 'none', runs targeted ASR on the segment.
     - Renders 9:16 vertical video and registers clip in DB.
     """
@@ -171,194 +173,253 @@ async def _execute_manual_clip_pipeline(
     async with get_db_connection() as db:
         try:
             async with db.execute(
-                "SELECT source_url, genre, language FROM jobs WHERE id = ?", (job_id,)
+                "SELECT source_url, genre, language, title, video_id FROM jobs WHERE id = ?", (job_id,)
             ) as cur:
                 row = await cur.fetchone()
                 if not row:
                     return
-                source_url, genre, language = row[0], row[1], row[2]
+                source_url, genre, language, cur_title, cur_video_id = row[0], row[1], row[2], row[3], row[4]
 
-            # 1. Video metadata probe (fast metadata fetch)
-            try:
-                meta = await probe_video(source_url)
-                video_id = meta.video_id
-                v_title = meta.title
-            except Exception as pe:
-                logger.warning("manual_probe_fallback", error=str(pe))
-                video_id = None
-                v_title = "YouTube Video"
-
-            duration = max(1.0, round(end_s - start_s, 3))
-
-            m_st, s_st = int(start_s // 60), int(start_s % 60)
-            m_en, s_en = int(end_s // 60), int(end_s % 60)
-            clip_title = f"{v_title} [{m_st:02d}:{s_st:02d} - {m_en:02d}:{s_en:02d}]"
+            # Fast metadata probe if title or video_id missing
+            video_id = cur_video_id
+            v_title = cur_title
+            if not video_id or not v_title or v_title == "YouTube Video":
+                try:
+                    meta = await probe_video(source_url)
+                    video_id = meta.video_id
+                    v_title = meta.title
+                except Exception as pe:
+                    logger.warning("manual_probe_fallback", error=str(pe))
+                    if not video_id:
+                        try:
+                            from clipforge.ingest.url import validate_and_canonicalize_url
+                            _, video_id = validate_and_canonicalize_url(source_url)
+                        except Exception:
+                            video_id = None
+                    if not v_title:
+                        v_title = "YouTube Video"
 
             await db.execute(
                 """
                 UPDATE jobs
-                SET video_id = ?, title = ?, duration_s = ?, progress = 0.20, stage = 'downloading', updated_at = ?
+                SET video_id = ?, title = ?, progress = 0.10, stage = 'downloading', updated_at = ?
                 WHERE id = ?
                 """,
-                (video_id, clip_title, duration, datetime.now(UTC).isoformat(), job_id),
+                (video_id, v_title, datetime.now(UTC).isoformat(), job_id),
             )
             await db.commit()
 
-            # 2. Setup paths
+            # Find existing count of candidates to assign appropriate ranks
+            async with db.execute(
+                "SELECT COUNT(*) FROM candidates WHERE job_id = ?", (job_id,)
+            ) as c_cur:
+                c_row = await c_cur.fetchone()
+                base_rank = (c_row[0] if c_row else 0) + 1
+
             job_dir = settings.data_dir / "jobs" / job_id
-            clip_id = str(uuid.uuid4())
-            cand_id = f"cand_manual_{clip_id[:8]}"
-            clip_dir = job_dir / "clips" / clip_id
-            clip_dir.mkdir(parents=True, exist_ok=True)
-            raw_video = clip_dir / "raw.mp4"
+            job_dir.mkdir(parents=True, exist_ok=True)
+            total_items = max(1, len(clip_items))
+            rendered_any = False
 
-            # Insert Candidate record for consistency
-            now_iso = datetime.now(UTC).isoformat()
-            await db.execute(
-                """
-                INSERT INTO candidates (
-                    id, job_id, rank, start_s, end_s, peak_s, signal_score, llm_score,
-                    final_score, category, title, hook_text, reason, evidence_json, status,
-                    user_start_s, user_end_s
-                ) VALUES (?, ?, 1, ?, ?, ?, 1.0, 1.0, 1.0, 'manual', ?, ?, 'Manual timestamp cut', '{}', 'kept', ?, ?)
-                """,
-                (
-                    cand_id,
-                    job_id,
-                    start_s,
-                    end_s,
-                    start_s,
-                    clip_title,
-                    clip_title,
-                    start_s,
-                    end_s,
-                ),
-            )
-            await db.commit()
+            for idx, (start_s, end_s, custom_title) in enumerate(clip_items):
+                if engine.is_cancelled(job_id):
+                    break
 
-            # 3. Direct fast range extraction via download_video_range
-            await download_video_range(
-                source_url=source_url,
-                start_s=start_s,
-                end_s=end_s,
-                out_path=raw_video,
-            )
+                duration = max(1.0, round(end_s - start_s, 3))
+                m_st, s_st = int(start_s // 60), int(start_s % 60)
+                m_en, s_en = int(end_s // 60), int(end_s % 60)
+                time_tag = f"[{m_st:02d}:{s_st:02d} - {m_en:02d}:{s_en:02d}]"
+                clip_title = custom_title.strip() if custom_title and custom_title.strip() else f"{v_title} {time_tag}"
 
-            if not raw_video.exists() or raw_video.stat().st_size < 1000:
-                raise RuntimeError(f"Failed to extract video segment {start_s}s - {end_s}s")
+                clip_id = str(uuid.uuid4())
+                cand_id = f"cand_manual_{clip_id[:8]}"
+                clip_dir = job_dir / "clips" / clip_id
+                clip_dir.mkdir(parents=True, exist_ok=True)
+                raw_video = clip_dir / "raw.mp4"
+                now_iso = datetime.now(UTC).isoformat()
 
-            # 4. Subtitle handling
-            has_subtitles = subtitle_style.lower() not in (
-                "none",
-                "off",
-                "disable",
-                "no_subtitles",
-                "tanpa_subtitle",
-            )
-            ass_file: Path | None = None
-            srt_file: Path = clip_dir / "clip.srt"
-
-            if has_subtitles:
+                # Step progress
+                frac_done = idx / total_items
                 await db.execute(
-                    "UPDATE jobs SET progress = 0.50, stage = 'targeted_asr', updated_at = ? WHERE id = ?",
+                    """
+                    UPDATE jobs
+                    SET progress = ?, stage = 'downloading', updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (round(0.10 + frac_done * 0.85, 2), now_iso, job_id),
+                )
+                await db.commit()
+
+                # Insert Candidate record
+                await db.execute(
+                    """
+                    INSERT INTO candidates (
+                        id, job_id, rank, start_s, end_s, peak_s, signal_score, llm_score,
+                        final_score, category, title, hook_text, reason, evidence_json, status,
+                        user_start_s, user_end_s
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1.0, 1.0, 1.0, 'manual', ?, ?, 'Manual timestamp cut', '{}', 'kept', ?, ?)
+                    """,
+                    (
+                        cand_id,
+                        job_id,
+                        base_rank + idx,
+                        start_s,
+                        end_s,
+                        start_s,
+                        clip_title,
+                        clip_title,
+                        start_s,
+                        end_s,
+                    ),
+                )
+                await db.commit()
+
+                # Download video range
+                await download_video_range(
+                    source_url=source_url,
+                    start_s=start_s,
+                    end_s=end_s,
+                    out_path=raw_video,
+                )
+
+                if not raw_video.exists() or raw_video.stat().st_size < 1000:
+                    logger.error("manual_segment_download_failed", clip_id=clip_id, start_s=start_s, end_s=end_s)
+                    continue
+
+                # Subtitle handling
+                has_subtitles = subtitle_style.lower() not in (
+                    "none",
+                    "off",
+                    "disable",
+                    "no_subtitles",
+                    "tanpa_subtitle",
+                )
+                ass_file: Path | None = None
+                srt_file: Path = clip_dir / "clip.srt"
+
+                if has_subtitles:
+                    await db.execute(
+                        "UPDATE jobs SET stage = 'targeted_asr', updated_at = ? WHERE id = ?",
+                        (datetime.now(UTC).isoformat(), job_id),
+                    )
+                    await db.commit()
+
+                    raw_words = transcribe_clip_media(raw_video)
+                    val_words = validate_and_normalize_words(raw_words, clip_duration_s=duration)
+                    chunks = create_kinetic_chunks(val_words)
+                    style_preset = load_style_preset(subtitle_style)
+                    ass_content = generate_ass_script(
+                        chunks, style=style_preset, subtitle_position=subtitle_position
+                    )
+
+                    ass_file = clip_dir / "subs.ass"
+                    ass_file.write_text(ass_content, encoding="utf-8")
+                    srt_file.write_text(export_srt(chunks), encoding="utf-8")
+
+                    track_id = str(uuid.uuid4())
+                    await db.execute(
+                        """
+                        INSERT INTO subtitle_tracks (id, clip_id, revision, source, language, style_json, created_at)
+                        VALUES (?, ?, 1, 'manual_asr', ?, ?, ?)
+                        """,
+                        (
+                            track_id,
+                            clip_id,
+                            language,
+                            json.dumps({
+                                "preset": subtitle_style,
+                                "subtitle_position": subtitle_position,
+                            }),
+                            now_iso,
+                        ),
+                    )
+                    for w in val_words:
+                        await db.execute(
+                            """
+                            INSERT INTO subtitle_words (track_id, idx, start_s, end_s, text, confidence)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (track_id, w.idx, w.start_s, w.end_s, w.text, w.confidence),
+                        )
+                    await db.commit()
+                else:
+                    srt_file.write_text("", encoding="utf-8")
+
+                # Render 9:16 vertical clip
+                await db.execute(
+                    "UPDATE jobs SET stage = 'render_clips', updated_at = ? WHERE id = ?",
                     (datetime.now(UTC).isoformat(), job_id),
                 )
                 await db.commit()
 
-                # Word-level transcription directly on the extracted clip
-                raw_words = transcribe_clip_media(raw_video)
-                val_words = validate_and_normalize_words(raw_words, clip_duration_s=duration)
-                chunks = create_kinetic_chunks(val_words)
-                style_preset = load_style_preset(subtitle_style)
-                ass_content = generate_ass_script(
-                    chunks, style=style_preset, subtitle_position=subtitle_position
+                render_res = render_single_clip(
+                    clip_dir=clip_dir,
+                    raw_video=raw_video,
+                    ass_path=ass_file if has_subtitles else None,
+                    mode=reframe_mode,
+                    expected_duration_s=duration,
                 )
 
-                ass_file = clip_dir / "subs.ass"
-                ass_file.write_text(ass_content, encoding="utf-8")
-                srt_file.write_text(export_srt(chunks), encoding="utf-8")
+                if not render_res["success"]:
+                    logger.error("manual_render_failed", clip_id=clip_id, errors=render_res.get("qa", {}).get("errors"))
+                    continue
 
-                track_id = str(uuid.uuid4())
+                rendered_any = True
+
+                # Insert Clip
+                r_params_json = json.dumps({
+                    "reframe_mode": reframe_mode,
+                    "subtitle_style": subtitle_style,
+                    "subtitle_position": subtitle_position,
+                })
+                qa_json_str = json.dumps(render_res["qa"])
                 await db.execute(
                     """
-                    INSERT INTO subtitle_tracks (id, clip_id, revision, source, language, style_json, created_at)
-                    VALUES (?, ?, 1, 'manual_asr', ?, ?, ?)
+                    INSERT INTO clips (
+                        id, candidate_id, job_id, status, video_path, thumb_path, srt_path,
+                        width, height, duration_s, render_params_json, qa_json, created_at
+                    ) VALUES (?, ?, ?, 'done', ?, ?, ?, 1080, 1920, ?, ?, ?, ?)
                     """,
                     (
-                        track_id,
                         clip_id,
-                        language,
-                        json.dumps({
-                            "preset": subtitle_style,
-                            "subtitle_position": subtitle_position,
-                        }),
+                        cand_id,
+                        job_id,
+                        render_res["final_path"],
+                        render_res["thumb_path"],
+                        str(srt_file),
+                        duration,
+                        r_params_json,
+                        qa_json_str,
                         now_iso,
                     ),
                 )
-                for w in val_words:
-                    await db.execute(
-                        """
-                        INSERT INTO subtitle_words (track_id, idx, start_s, end_s, text, confidence)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (track_id, w.idx, w.start_s, w.end_s, w.text, w.confidence),
-                    )
                 await db.commit()
+
+                # Sync to finished_clips
+                await sync_finished_clip(db, clip_id)
+
+            if engine.is_cancelled(job_id):
+                await transition_job_status(db, job_id, JobStatus.CANCELLED)
+            elif rendered_any:
+                target_status = JobStatus.DONE
+                if previous_status == JobStatus.AWAITING_REVIEW.value:
+                    async with db.execute(
+                        "SELECT COUNT(*) FROM candidates WHERE job_id = ? AND status = 'kept' AND id NOT IN (SELECT candidate_id FROM clips WHERE job_id = ?)",
+                        (job_id, job_id),
+                    ) as unrendered_cur:
+                        unrendered_row = await unrendered_cur.fetchone()
+                        if unrendered_row and unrendered_row[0] > 0:
+                            target_status = JobStatus.AWAITING_REVIEW
+
+                await transition_job_status(db, job_id, target_status, progress=1.0)
             else:
-                srt_file.write_text("", encoding="utf-8")
-
-            # 5. Render 9:16 vertical clip
-            await db.execute(
-                "UPDATE jobs SET progress = 0.75, stage = 'render_clips', updated_at = ? WHERE id = ?",
-                (datetime.now(UTC).isoformat(), job_id),
-            )
-            await db.commit()
-
-            render_res = render_single_clip(
-                clip_dir=clip_dir,
-                raw_video=raw_video,
-                ass_path=ass_file if has_subtitles else None,
-                mode=reframe_mode,
-                expected_duration_s=duration,
-            )
-
-            if not render_res["success"]:
-                raise RuntimeError(f"Render failed: {render_res.get('qa', {}).get('errors')}")
-
-            # 6. Insert Clip
-            r_params_json = json.dumps({
-                "reframe_mode": reframe_mode,
-                "subtitle_style": subtitle_style,
-                "subtitle_position": subtitle_position,
-            })
-            qa_json_str = json.dumps(render_res["qa"])
-            await db.execute(
-                """
-                INSERT INTO clips (
-                    id, candidate_id, job_id, status, video_path, thumb_path, srt_path,
-                    width, height, duration_s, render_params_json, qa_json, created_at
-                ) VALUES (?, ?, ?, 'done', ?, ?, ?, 1080, 1920, ?, ?, ?, ?)
-                """,
-                (
-                    clip_id,
-                    cand_id,
+                await transition_job_status(
+                    db,
                     job_id,
-                    render_res["final_path"],
-                    render_res["thumb_path"],
-                    str(srt_file),
-                    duration,
-                    r_params_json,
-                    qa_json_str,
-                    now_iso,
-                ),
-            )
-            await db.commit()
-
-            # 7. Sync to finished_clips
-            await sync_finished_clip(db, clip_id)
-
-            # 8. Mark job as done
-            await transition_job_status(db, job_id, JobStatus.DONE, progress=1.0)
+                    JobStatus.FAILED,
+                    error_code="MANUAL_CLIP_FAILED",
+                    error_message="Semua klip gagal diekstrak atau dirender",
+                )
 
         except asyncio.CancelledError:
             await transition_job_status(db, job_id, JobStatus.CANCELLED)
@@ -373,46 +434,90 @@ async def _execute_manual_clip_pipeline(
             )
 
 
+async def _execute_manual_clip_pipeline(
+    job_id: str,
+    start_s: float,
+    end_s: float,
+    reframe_mode: str = "blur",
+    subtitle_style: str = "none",
+    subtitle_position: str = "bottom",
+) -> None:
+    await _execute_manual_clips_batch(
+        job_id=job_id,
+        clip_items=[(start_s, end_s, None)],
+        reframe_mode=reframe_mode,
+        subtitle_style=subtitle_style,
+        subtitle_position=subtitle_position,
+    )
+
+
 @router.post("/manual", status_code=status.HTTP_202_ACCEPTED, response_model=JobResponse)
 async def create_manual_job(
     req: ManualClipCreateRequest,
     db: aiosqlite.Connection = Depends(get_db),
 ) -> JobResponse:
-    """Create a new manual clipping job for exact timestamp segment (bypasses auto-clipper)."""
+    """Create a new manual clipping job for exact timestamp segment(s) (bypasses auto-clipper)."""
     _validate_source_url(req.source_url)
     try:
-        start_s = parse_timestamp_to_seconds(req.start_time)
-        end_s = parse_timestamp_to_seconds(req.end_time)
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+        from clipforge.ingest.url import validate_and_canonicalize_url
+        _, video_id = validate_and_canonicalize_url(req.source_url)
+    except Exception:
+        video_id = None
 
-    if start_s < 0:
-        raise HTTPException(status_code=400, detail="Start time must be >= 0")
-    if end_s <= start_s:
-        raise HTTPException(status_code=400, detail="End time must be greater than start time")
-    if end_s - start_s < 1.0:
-        raise HTTPException(status_code=400, detail="Clip duration must be at least 1.0 second")
+    clip_tuples: list[tuple[float, float, str | None]] = []
+    if req.clips:
+        for item in req.clips:
+            try:
+                start_s = parse_timestamp_to_seconds(item.start_time)
+                end_s = parse_timestamp_to_seconds(item.end_time)
+            except ValueError as ve:
+                raise HTTPException(status_code=400, detail=str(ve))
+            if start_s < 0:
+                raise HTTPException(status_code=400, detail="Start time must be >= 0")
+            if end_s <= start_s:
+                raise HTTPException(status_code=400, detail="End time must be greater than start time")
+            if end_s - start_s < 1.0:
+                raise HTTPException(status_code=400, detail="Clip duration must be at least 1.0 second")
+            clip_tuples.append((start_s, end_s, item.title))
+    elif req.start_time is not None and req.end_time is not None:
+        try:
+            start_s = parse_timestamp_to_seconds(req.start_time)
+            end_s = parse_timestamp_to_seconds(req.end_time)
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve))
+        if start_s < 0:
+            raise HTTPException(status_code=400, detail="Start time must be >= 0")
+        if end_s <= start_s:
+            raise HTTPException(status_code=400, detail="End time must be greater than start time")
+        if end_s - start_s < 1.0:
+            raise HTTPException(status_code=400, detail="Clip duration must be at least 1.0 second")
+        clip_tuples.append((start_s, end_s, req.title))
+    else:
+        raise HTTPException(status_code=400, detail="No clip timestamps provided")
 
     job_id = str(uuid.uuid4())
     now_iso = datetime.now(UTC).isoformat()
     params_dict = {
         "manual": True,
-        "start_s": start_s,
-        "end_s": end_s,
+        "clips": [
+            {"start_s": s, "end_s": e, "title": t}
+            for (s, e, t) in clip_tuples
+        ],
         "reframe_mode": req.reframe_mode,
         "subtitle_style": req.subtitle_style,
-        "title": req.title,
+        "subtitle_position": req.subtitle_position,
     }
     params_json = json.dumps(params_dict)
 
     await db.execute(
         """
-        INSERT INTO jobs (id, source_url, genre, language, params_json, status, progress, created_at, updated_at)
-        VALUES (?, ?, 'manual', ?, ?, ?, 0.0, ?, ?)
+        INSERT INTO jobs (id, source_url, video_id, genre, language, params_json, status, progress, created_at, updated_at)
+        VALUES (?, ?, ?, 'manual', ?, ?, ?, 0.0, ?, ?)
         """,
         (
             job_id,
             req.source_url,
+            video_id,
             req.language,
             params_json,
             JobStatus.RUNNING.value,
@@ -423,10 +528,9 @@ async def create_manual_job(
     await db.commit()
 
     task = asyncio.create_task(
-        _execute_manual_clip_pipeline(
+        _execute_manual_clips_batch(
             job_id=job_id,
-            start_s=start_s,
-            end_s=end_s,
+            clip_items=clip_tuples,
             reframe_mode=req.reframe_mode,
             subtitle_style=req.subtitle_style,
             subtitle_position=req.subtitle_position,
@@ -437,6 +541,7 @@ async def create_manual_job(
     return JobResponse(
         id=job_id,
         source_url=req.source_url,
+        video_id=video_id,
         genre="manual",
         language=req.language,
         status=JobStatus.RUNNING,
@@ -446,6 +551,80 @@ async def create_manual_job(
     )
 
 
+@router.post("/{job_id}/manual-clips", status_code=status.HTTP_202_ACCEPTED)
+async def add_manual_clips_to_job(
+    job_id: str,
+    req: AddManualClipsRequest,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Add one or more manual clips to an existing project/job without creating a new project."""
+    async with db.execute(
+        "SELECT id, source_url, genre, language, params_json, status, video_id, title FROM jobs WHERE id = ?",
+        (job_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise JobNotFoundError(f"Job {job_id} not found")
+        source_url, genre, language, params_json, current_status, video_id, title = (
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+            row[5],
+            row[6],
+            row[7],
+        )
+
+    if not req.clips:
+        raise HTTPException(status_code=400, detail="No clips provided")
+
+    clip_tuples: list[tuple[float, float, str | None]] = []
+    for item in req.clips:
+        try:
+            start_s = parse_timestamp_to_seconds(item.start_time)
+            end_s = parse_timestamp_to_seconds(item.end_time)
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve))
+        if start_s < 0:
+            raise HTTPException(status_code=400, detail="Start time must be >= 0")
+        if end_s <= start_s:
+            raise HTTPException(status_code=400, detail="End time must be greater than start time")
+        if end_s - start_s < 1.0:
+            raise HTTPException(status_code=400, detail="Clip duration must be at least 1.0 second")
+        clip_tuples.append((start_s, end_s, item.title))
+
+    params = json.loads(params_json) if params_json else {}
+    reframe = req.reframe_mode or params.get("reframe_mode", "blur")
+    style = req.subtitle_style or params.get("subtitle_style", "classic_white")
+    position = req.subtitle_position or params.get("subtitle_position", "bottom")
+
+    now_iso = datetime.now(UTC).isoformat()
+    await db.execute(
+        "UPDATE jobs SET error_code = NULL, error_message = NULL, status = ?, progress = 0.10, stage = 'manual_clipping', updated_at = ? WHERE id = ?",
+        (JobStatus.RENDERING.value, now_iso, job_id),
+    )
+    await db.commit()
+
+    task = asyncio.create_task(
+        _execute_manual_clips_batch(
+            job_id=job_id,
+            clip_items=clip_tuples,
+            reframe_mode=reframe,
+            subtitle_style=style,
+            subtitle_position=position,
+            previous_status=current_status,
+        )
+    )
+    engine._active_tasks[f"manual_{job_id}_{uuid.uuid4().hex[:6]}"] = task
+
+    return {
+        "status": "processing",
+        "job_id": job_id,
+        "clips_count": len(clip_tuples),
+        "message": f"Mengekstrak {len(clip_tuples)} klip manual baru ke proyek ini",
+    }
+
+
 @router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=JobResponse)
 async def create_job(
     req: JobCreateRequest,
@@ -453,6 +632,11 @@ async def create_job(
 ) -> JobResponse:
     """Create a new clipping job and schedule pipeline execution."""
     _validate_source_url(req.source_url)
+    try:
+        from clipforge.ingest.url import validate_and_canonicalize_url
+        _, video_id = validate_and_canonicalize_url(req.source_url)
+    except Exception:
+        video_id = None
 
     job_id = str(uuid.uuid4())
     now_iso = datetime.now(UTC).isoformat()
@@ -464,12 +648,13 @@ async def create_job(
 
     await db.execute(
         """
-        INSERT INTO jobs (id, source_url, genre, language, params_json, status, progress, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 0.0, ?, ?)
+        INSERT INTO jobs (id, source_url, video_id, genre, language, params_json, status, progress, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?)
         """,
         (
             job_id,
             req.source_url,
+            video_id,
             "manual" if is_manual else req.genre,
             req.language,
             params_json,
@@ -501,6 +686,7 @@ async def create_job(
     return JobResponse(
         id=job_id,
         source_url=req.source_url,
+        video_id=video_id,
         genre="manual" if is_manual else req.genre,
         language=req.language,
         status=JobStatus(initial_status),
@@ -529,10 +715,18 @@ async def get_job_status(
         if not row:
             raise JobNotFoundError(f"Job {job_id} not found")
 
+        v_id = row[2]
+        if not v_id:
+            try:
+                from clipforge.ingest.url import validate_and_canonicalize_url
+                _, v_id = validate_and_canonicalize_url(row[1])
+            except Exception:
+                v_id = None
+
         return JobResponse(
             id=row[0],
             source_url=row[1],
-            video_id=row[2],
+            video_id=v_id,
             title=row[3],
             duration_s=row[4],
             genre=row[5],
@@ -848,11 +1042,19 @@ async def list_jobs(
     results: list[JobResponse] = []
     async with db.execute(query, (limit,)) as cursor:
         async for row in cursor:
+            v_id = row[2]
+            if not v_id:
+                try:
+                    from clipforge.ingest.url import validate_and_canonicalize_url
+                    _, v_id = validate_and_canonicalize_url(row[1])
+                except Exception:
+                    v_id = None
+
             results.append(
                 JobResponse(
                     id=row[0],
                     source_url=row[1],
-                    video_id=row[2],
+                    video_id=v_id,
                     title=row[3],
                     duration_s=row[4],
                     genre=row[5],

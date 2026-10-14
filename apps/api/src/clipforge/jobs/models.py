@@ -76,15 +76,29 @@ class JobCreateRequest(BaseModel):
         return data
 
 
-class ManualClipCreateRequest(BaseModel):
-    source_url: str = Field(..., description="YouTube video URL")
+class ManualClipItem(BaseModel):
     start_time: str | float = Field(..., description="Start timestamp (e.g. '12:35' or seconds)")
     end_time: str | float = Field(..., description="End timestamp (e.g. '14:20' or seconds)")
+    title: str | None = Field(default=None, description="Optional custom title for this clip")
+
+
+class ManualClipCreateRequest(BaseModel):
+    source_url: str = Field(..., description="YouTube video URL")
+    start_time: str | float | None = Field(default=None, description="Start timestamp (single clip backward-compat)")
+    end_time: str | float | None = Field(default=None, description="End timestamp (single clip backward-compat)")
     title: str | None = Field(default=None, description="Optional custom title")
+    clips: list[ManualClipItem] | None = Field(default=None, description="List of multiple manual clip segments")
     reframe_mode: str = Field(default="blur", description="blur, center, stacked")
     subtitle_style: str = Field(default="none", description="Subtitle visual preset")
     subtitle_position: str = Field(default="bottom", description="Subtitle placement: 'bottom' or 'top' (Shorts safe)")
     language: str = Field(default="id", description="Language code")
+
+
+class AddManualClipsRequest(BaseModel):
+    clips: list[ManualClipItem] = Field(..., description="List of manual clip segments to add to existing job")
+    reframe_mode: str | None = Field(default=None, description="Optional reframe mode override")
+    subtitle_style: str | None = Field(default=None, description="Optional subtitle style override")
+    subtitle_position: str | None = Field(default=None, description="Optional subtitle position override")
 
 
 class JobResponse(BaseModel):

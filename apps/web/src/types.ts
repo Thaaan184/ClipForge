@@ -1,3 +1,9 @@
+export interface ManualClipSegment {
+  start_time: string | number;
+  end_time: string | number;
+  title?: string;
+}
+
 export interface JobParams {
   clip_count?: number;
   reframe_mode?: "blur" | "center" | "stacked";
@@ -9,6 +15,7 @@ export interface JobParams {
   start_time?: string | number;
   end_time?: string | number;
   title?: string;
+  clips?: ManualClipSegment[];
 }
 
 export interface Job {

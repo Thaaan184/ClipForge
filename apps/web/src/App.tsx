@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  addManualClipsToJob,
   cancelJob,
   createJob,
   createManualJob,
@@ -13,11 +14,13 @@ import {
   getJob,
   getJobClips,
   getTimeline,
+  getYoutubeThumbnail,
   listFinishedClips,
   listJobs,
   triggerRender,
   updateCandidate,
 } from "./api";
+import { AddManualClipModal } from "./components/AddManualClipModal";
 import { CandidateCard } from "./components/CandidateCard";
 import { ClipPlayer } from "./components/ClipPlayer";
 import { EvaluationView } from "./components/EvaluationView";
@@ -31,6 +34,7 @@ import {
   FinishedClip,
   Job,
   JobParams,
+  ManualClipSegment,
   SubtitleTrack,
   TimelineData,
 } from "./types";
@@ -45,6 +49,7 @@ import {
   Film,
   Layers,
   Play,
+  Plus,
   RefreshCw,
   Sparkles,
   Trash2,
@@ -108,6 +113,10 @@ export default function App(): JSX.Element {
   const [isRendering, setIsRendering] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Modal for adding manual clips to existing project
+  const [showAddClipModal, setShowAddClipModal] = useState(false);
+  const [modalTargetJob, setModalTargetJob] = useState<Job | null>(null);
 
   // Render configuration for candidate processing
   const [renderSubtitleStyle, setRenderSubtitleStyle] = useState<string>("classic_white");
@@ -259,48 +268,48 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
+  const fetchJobDetails = async (jobId: string) => {
+    try {
+      const updated = await getJob(jobId);
+      setCurrentJob(updated);
+
+      if (["awaiting_review", "rendering", "done"].includes(updated.status)) {
+        const [tData, cData] = await Promise.all([
+          getTimeline(updated.id).catch(() => null),
+          getCandidates(updated.id).catch(() => ({ candidates: [] })),
+        ]);
+        if (tData) setTimeline(tData);
+        if (cData) setCandidates(cData.candidates);
+      }
+
+      if (["rendering", "done"].includes(updated.status)) {
+        const clipsRes = await getJobClips(updated.id).catch(() => ({ clips: [] }));
+        if (clipsRes && clipsRes.clips.length > 0) {
+          setRenderedClips(clipsRes.clips);
+          if (!activeClip) {
+            const first = clipsRes.clips[0];
+            setActiveClip(first);
+            getClipSubtitles(first.id)
+              .then(setActiveSubtitleTrack)
+              .catch(() => {});
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to poll job:", err);
+    }
+  };
+
   // Poll current job when in progress
   useEffect(() => {
     if (!currentJob) return;
     const isTerminal = ["done", "failed", "cancelled"].includes(currentJob.status);
 
-    const fetchDetails = async (jobId: string) => {
-      try {
-        const updated = await getJob(jobId);
-        setCurrentJob(updated);
-
-        if (["awaiting_review", "rendering", "done"].includes(updated.status)) {
-          const [tData, cData] = await Promise.all([
-            getTimeline(updated.id).catch(() => null),
-            getCandidates(updated.id).catch(() => ({ candidates: [] })),
-          ]);
-          if (tData) setTimeline(tData);
-          if (cData) setCandidates(cData.candidates);
-        }
-
-        if (["rendering", "done"].includes(updated.status)) {
-          const clipsRes = await getJobClips(updated.id).catch(() => ({ clips: [] }));
-          if (clipsRes && clipsRes.clips.length > 0) {
-            setRenderedClips(clipsRes.clips);
-            if (!activeClip) {
-              const first = clipsRes.clips[0];
-              setActiveClip(first);
-              getClipSubtitles(first.id)
-                .then(setActiveSubtitleTrack)
-                .catch(() => {});
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Failed to poll job:", err);
-      }
-    };
-
-    fetchDetails(currentJob.id);
+    fetchJobDetails(currentJob.id);
     if (isTerminal) return;
 
     const interval = setInterval(() => {
-      fetchDetails(currentJob.id);
+      fetchJobDetails(currentJob.id);
     }, 2500);
 
     return () => clearInterval(interval);
@@ -343,15 +352,15 @@ export default function App(): JSX.Element {
 
   const handleStartManualJob = async (
     url: string,
-    startTime: string,
-    endTime: string,
+    clipsOrStart: string | number | ManualClipSegment[],
+    endTime?: string | number,
     options: {
       title?: string;
       reframe_mode?: string;
       subtitle_style?: string;
       subtitle_position?: string;
       language?: string;
-    }
+    } = {}
   ) => {
     setLoading(true);
     try {
@@ -364,7 +373,7 @@ export default function App(): JSX.Element {
       if (options.reframe_mode) {
         setRenderReframeMode(options.reframe_mode);
       }
-      const job = await createManualJob(url, startTime, endTime, options);
+      const job = await createManualJob(url, clipsOrStart, endTime, options);
       setCurrentJob(job);
       setTimeline(null);
       setCandidates([]);
@@ -373,10 +382,44 @@ export default function App(): JSX.Element {
       setActiveClip(null);
       setActiveSubtitleTrack(null);
       navigateTo("proc", job.id);
-      showToast("Manual clip sedang diekstrak secara cepat!");
+      showToast("Manual clip sedang diproses!");
       loadRecentJobs();
     } catch (err: any) {
       showToast(`Gagal membuat manual clip: ${err?.message || err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenAddClipModal = (job: Job, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setModalTargetJob(job);
+    setShowAddClipModal(true);
+  };
+
+  const handleAddManualClipsToExistingJob = async (
+    jobId: string,
+    clips: ManualClipSegment[],
+    options: {
+      reframe_mode?: string;
+      subtitle_style?: string;
+      subtitle_position?: string;
+    }
+  ) => {
+    setLoading(true);
+    try {
+      await addManualClipsToJob(jobId, clips, options);
+      showToast(`Berhasil menambahkan ${clips.length} klip manual ke proyek!`);
+      setShowAddClipModal(false);
+      setModalTargetJob(null);
+
+      // If adding to currently active job, re-fetch immediately
+      if (currentJob?.id === jobId) {
+        fetchJobDetails(jobId);
+      }
+      loadRecentJobs();
+    } catch (err: any) {
+      showToast(`Gagal menambahkan klip: ${err?.message || err}`);
     } finally {
       setLoading(false);
     }
@@ -714,63 +757,86 @@ export default function App(): JSX.Element {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {recentJobs.map((j) => (
-                    <div
-                      key={j.id}
-                      onClick={() => handleSelectRecentJob(j)}
-                      className="marked-card p-4 bg-surface border border-line hover:border-action cursor-pointer transition-all flex flex-col justify-between gap-3 shadow-md"
-                    >
-                      <i className="crop-mark crop-tl" />
-                      <i className="crop-mark crop-tr" />
-                      <i className="crop-mark crop-bl" />
-                      <i className="crop-mark crop-br" />
+                  {recentJobs.map((j) => {
+                    const thumb = getYoutubeThumbnail(j.video_id, j.source_url);
+                    return (
+                      <div
+                        key={j.id}
+                        onClick={() => handleSelectRecentJob(j)}
+                        className="marked-card p-4 bg-surface border border-line hover:border-action cursor-pointer transition-all flex flex-col justify-between gap-3 shadow-md group"
+                      >
+                        <i className="crop-mark crop-tl" />
+                        <i className="crop-mark crop-tr" />
+                        <i className="crop-mark crop-bl" />
+                        <i className="crop-mark crop-br" />
 
-                      <div className="aspect-[16/9] bg-card border-x-4 border-dashed border-line p-3 flex flex-col justify-between relative overflow-hidden">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-mono font-bold bg-bg px-2 py-0.5 border border-line text-copy uppercase">
-                            JOB: {j.id.slice(0, 8)}
-                          </span>
-                          <span
-                            className={`text-[9px] font-bold px-1.5 py-0.5 border uppercase ${
-                              j.status === "done"
-                                ? "border-green-500/40 text-green-400 bg-green-500/10"
-                                : j.status === "failed"
-                                ? "border-err/40 text-err bg-err/10"
-                                : "border-action/40 text-action bg-action/10"
-                            }`}
-                          >
-                            {j.status}
-                          </span>
+                        {/* Source Video Thumbnail Box */}
+                        <div className="aspect-[16/9] bg-card border border-line relative overflow-hidden">
+                          {thumb ? (
+                            <img
+                              src={thumb}
+                              alt={j.title || "Source thumbnail"}
+                              className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              loading="lazy"
+                            />
+                          ) : null}
+                          <div className="absolute inset-0 bg-gradient-to-t from-bg via-bg/60 to-bg/30 p-3 flex flex-col justify-between relative z-10">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-mono font-bold bg-bg/90 backdrop-blur-sm px-2 py-0.5 border border-line text-copy uppercase">
+                                JOB: {j.id.slice(0, 8)}
+                              </span>
+                              <span
+                                className={`text-[9px] font-bold px-1.5 py-0.5 border uppercase backdrop-blur-sm ${
+                                  j.status === "done"
+                                    ? "border-green-500/40 text-green-400 bg-green-500/20"
+                                    : j.status === "failed"
+                                    ? "border-err/40 text-err bg-err/20"
+                                    : "border-action/40 text-action bg-action/20"
+                                }`}
+                              >
+                                {j.status}
+                              </span>
+                            </div>
+                            <div className="font-extrabold text-sm text-white drop-shadow-md line-clamp-2">
+                              {j.title || j.source_url}
+                            </div>
+                            <div className="flex justify-between items-center text-[10px] font-mono text-muted drop-shadow-sm">
+                              <span className="bg-bg/85 px-1.5 py-0.5 border border-line/40">{j.genre.toUpperCase()}</span>
+                              <span className="bg-bg/85 px-1.5 py-0.5 border border-line/40">{Math.round(j.progress * 100)}%</span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="font-extrabold text-sm text-copy line-clamp-2">
-                          {j.title || j.source_url}
-                        </div>
-                        <div className="flex justify-between items-center text-[10px] font-mono text-muted">
-                          <span>{j.genre.toUpperCase()}</span>
-                          <span>{Math.round(j.progress * 100)}%</span>
+
+                        <div className="flex items-center justify-between text-xs text-muted font-mono pt-1">
+                          <span>{new Date(j.created_at).toLocaleDateString()}</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={(e) => handleOpenAddClipModal(j, e)}
+                              className="text-action hover:bg-action/10 px-2 py-1 border border-action/30 text-[10px] font-bold uppercase transition-colors flex items-center gap-1"
+                              title="Tambah klip manual ke proyek ini"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Tambah Klip</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isDeleting}
+                              onClick={(e) => handleDeleteJob(j.id, e)}
+                              className="text-muted hover:text-err p-1 transition-colors flex items-center gap-1 disabled:opacity-50"
+                              title="Hapus Proyek"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span className="text-[10px] hidden sm:inline">Hapus</span>
+                            </button>
+                            <span className="text-action font-bold flex items-center gap-1">
+                              Buka <ArrowRight className="w-3 h-3" />
+                            </span>
+                          </div>
                         </div>
                       </div>
-
-                      <div className="flex items-center justify-between text-xs text-muted font-mono pt-1">
-                        <span>{new Date(j.created_at).toLocaleDateString()}</span>
-                        <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            disabled={isDeleting}
-                            onClick={(e) => handleDeleteJob(j.id, e)}
-                            className="text-muted hover:text-err p-1 transition-colors flex items-center gap-1 disabled:opacity-50"
-                            title="Hapus Proyek"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span className="text-[10px] hidden sm:inline">Hapus</span>
-                          </button>
-                          <span className="text-action font-bold flex items-center gap-1">
-                            Buka Workspace <ArrowRight className="w-3 h-3" />
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -782,6 +848,67 @@ export default function App(): JSX.Element {
           <div className="flex flex-col gap-8">
             {currentJob ? (
               <>
+                {/* Project Header Banner with Source Video Thumbnail & Add Clip Button */}
+                <div className="marked-frame border border-line bg-surface p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                  <i className="crop-mark crop-tl" />
+                  <i className="crop-mark crop-tr" />
+                  <i className="crop-mark crop-bl" />
+                  <i className="crop-mark crop-br" />
+
+                  <div className="flex items-center gap-4 flex-1 min-w-0">
+                    {getYoutubeThumbnail(currentJob.video_id, currentJob.source_url) ? (
+                      <div className="w-24 sm:w-32 aspect-[16/9] bg-card border border-line overflow-hidden shrink-0 relative">
+                        <img
+                          src={getYoutubeThumbnail(currentJob.video_id, currentJob.source_url)!}
+                          alt="Source Video"
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute bottom-1 right-1 bg-bg/90 font-mono text-[8px] px-1 text-copy border border-line/50">
+                          SOURCE
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="w-24 aspect-[16/9] bg-card border border-line flex items-center justify-center shrink-0">
+                        <Film className="w-5 h-5 text-muted" />
+                      </div>
+                    )}
+
+                    <div className="flex flex-col gap-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-[10px] font-bold bg-action/10 text-action px-2 py-0.5 border border-action/30 uppercase">
+                          PROYEK: {currentJob.id.slice(0, 8)}
+                        </span>
+                        <span className="text-[10px] font-mono text-muted uppercase">
+                          {currentJob.genre} • {currentJob.language}
+                        </span>
+                      </div>
+                      <h2 className="font-extrabold text-base md:text-lg text-copy truncate" title={currentJob.title || currentJob.source_url}>
+                        {currentJob.title || currentJob.source_url}
+                      </h2>
+                      <a
+                        href={currentJob.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-muted hover:text-action truncate block max-w-lg font-mono"
+                      >
+                        {currentJob.source_url}
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Add Clip Button for this Project */}
+                  <div className="shrink-0 w-full md:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAddClipModal(currentJob)}
+                      className="w-full md:w-auto py-2.5 px-4 bg-action text-bg font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.99] transition-all shadow-md"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>+ TAMBAH KLIP KE PROYEK INI</span>
+                    </button>
+                  </div>
+                </div>
+
                 <ProgressTracker
                   job={currentJob}
                   onCancel={handleCancelJob}
@@ -1326,6 +1453,20 @@ export default function App(): JSX.Element {
         {/* VIEW 5: GOLDEN SET BENCHMARK */}
         {activeTab === "eval" && <EvaluationView />}
       </main>
+
+      {/* Modal Add Manual Clips to Existing Project */}
+      {showAddClipModal && (modalTargetJob || currentJob) && (
+        <AddManualClipModal
+          job={(modalTargetJob || currentJob)!}
+          isOpen={showAddClipModal}
+          onClose={() => {
+            setShowAddClipModal(false);
+            setModalTargetJob(null);
+          }}
+          onSubmit={handleAddManualClipsToExistingJob}
+          loading={loading}
+        />
+      )}
 
       {/* Floating Bottom Toast */}
       {toastMessage && (

@@ -8,7 +8,12 @@ import pytest
 from pydantic import ValidationError
 
 from clipforge.api.routes.jobs import parse_timestamp_to_seconds
-from clipforge.jobs.models import JobCreateRequest, ManualClipCreateRequest
+from clipforge.jobs.models import (
+    AddManualClipsRequest,
+    JobCreateRequest,
+    ManualClipCreateRequest,
+    ManualClipItem,
+)
 from clipforge.subtitles import (
     SubtitleWord,
     create_kinetic_chunks,
@@ -73,6 +78,36 @@ def test_manual_clip_create_request_validation():
     assert req.start_time == "12:35"
     assert req.end_time == "14:20"
     assert req.subtitle_style == "none"
+
+
+def test_manual_clip_create_request_multiple_clips():
+    req = ManualClipCreateRequest(
+        source_url="https://www.youtube.com/watch?v=abcdef12345",
+        clips=[
+            ManualClipItem(start_time="10:00", end_time="11:30", title="Momen 1"),
+            ManualClipItem(start_time="25:10", end_time="26:40", title="Momen 2"),
+        ],
+        subtitle_style="classic_white",
+        subtitle_position="top",
+    )
+    assert req.clips is not None
+    assert len(req.clips) == 2
+    assert req.clips[0].start_time == "10:00"
+    assert req.clips[0].title == "Momen 1"
+    assert req.clips[1].end_time == "26:40"
+    assert req.subtitle_position == "top"
+
+
+def test_add_manual_clips_request_validation():
+    req = AddManualClipsRequest(
+        clips=[
+            ManualClipItem(start_time="05:00", end_time="06:30", title="Klip Tambahan"),
+        ],
+        reframe_mode="stacked",
+    )
+    assert len(req.clips) == 1
+    assert req.clips[0].start_time == "05:00"
+    assert req.reframe_mode == "stacked"
 
 
 def test_subtitle_presets_color_distinction():
