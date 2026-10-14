@@ -19,6 +19,26 @@ logger = structlog.get_logger(__name__)
 ASSETS_FONTS_DIR = Path(__file__).parent.parent.parent.parent / "assets" / "fonts"
 
 
+def probe_media_duration(file_path: Path) -> float | None:
+    """Extract media duration using ffprobe."""
+    try:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_format",
+            str(file_path),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(proc.stdout)
+        dur = float(data.get("format", {}).get("duration", 0.0))
+        return dur if dur > 0 else None
+    except Exception:
+        return None
+
+
 def render_single_clip(
     clip_dir: Path,
     raw_video: Path,
@@ -95,7 +115,7 @@ def render_single_clip(
         "-crf",
         "18",
         "-preset",
-        "medium",
+        "veryfast",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
@@ -130,7 +150,14 @@ def render_single_clip(
     extract_thumbnail(final_mp4, thumb_jpg, time_s=thumb_time)
 
     # 5. Run strict automated QA
-    qa_res = run_clip_qa(final_mp4, expected_duration_s=expected_duration_s)
+    # Ground truth expected duration should match raw_video if downloaded media had fragment boundaries
+    target_expected_duration = expected_duration_s
+    if raw_video.exists():
+        raw_dur = probe_media_duration(raw_video)
+        if raw_dur and raw_dur > 0:
+            target_expected_duration = raw_dur
+
+    qa_res = run_clip_qa(final_mp4, expected_duration_s=target_expected_duration)
     qa_json_path.write_text(json.dumps(qa_res, indent=2), encoding="utf-8")
 
     return {

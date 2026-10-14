@@ -278,7 +278,7 @@ export const JobForm: React.FC<JobFormProps> = ({
             ) : (
               <>
                 <Zap className="w-4 h-4 fill-current" />
-                <span>POTONG SEKARANG ({manualClips.length} KLIP)</span>
+                <span>LANJUT KE REVIEW ({manualClips.length} KLIP)</span>
               </>
             )}
           </button>

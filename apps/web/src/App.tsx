@@ -382,7 +382,8 @@ export default function App(): JSX.Element {
       setActiveClip(null);
       setActiveSubtitleTrack(null);
       navigateTo("proc", job.id);
-      showToast("Manual clip sedang diproses!");
+      fetchJobDetails(job.id);
+      showToast("Klip manual siap ditinjau di tab Review!");
       loadRecentJobs();
     } catch (err: any) {
       showToast(`Gagal membuat manual clip: ${err?.message || err}`);
@@ -413,10 +414,9 @@ export default function App(): JSX.Element {
       setShowAddClipModal(false);
       setModalTargetJob(null);
 
-      // If adding to currently active job, re-fetch immediately
-      if (currentJob?.id === jobId) {
-        fetchJobDetails(jobId);
-      }
+      // Navigate to review tab and re-fetch details
+      navigateTo("proc", jobId);
+      fetchJobDetails(jobId);
       loadRecentJobs();
     } catch (err: any) {
       showToast(`Gagal menambahkan klip: ${err?.message || err}`);
@@ -516,7 +516,7 @@ export default function App(): JSX.Element {
 
   const handleUpdateStatus = async (
     candId: string,
-    status: "kept" | "rejected"
+    status: "kept" | "rejected" | "proposed"
   ) => {
     try {
       await updateCandidate(candId, { status });
@@ -552,7 +552,10 @@ export default function App(): JSX.Element {
     setIsRendering(true);
     try {
       const kept = candidates.filter((c) => c.status === "kept");
-      const candIds = kept.length > 0 ? kept.map((c) => c.id) : undefined;
+      const unrejected = candidates.filter((c) => c.status !== "rejected");
+      const targetCands = kept.length > 0 ? kept : unrejected;
+      const candIds = targetCands.length > 0 ? targetCands.map((c) => c.id) : undefined;
+
       await triggerRender(currentJob.id, {
         candidate_ids: candIds,
         subtitle_style: renderSubtitleStyle,
@@ -624,7 +627,10 @@ export default function App(): JSX.Element {
     }
   };
 
-  const keptCandidatesCount = candidates.filter((c) => c.status === "kept").length;
+  const keptCandidates = candidates.filter((c) => c.status === "kept");
+  const unrejectedCandidates = candidates.filter((c) => c.status !== "rejected");
+  const candidatesToRenderCount =
+    keptCandidates.length > 0 ? keptCandidates.length : unrejectedCandidates.length;
 
   return (
     <div className="min-h-screen bg-bg text-copy flex flex-col font-sans">
@@ -1076,7 +1082,7 @@ export default function App(): JSX.Element {
                             <>
                               <Play className="w-4 h-4 fill-bg" />
                               <span>
-                                RENDER KANDIDAT TERPILIH ({keptCandidatesCount > 0 ? keptCandidatesCount : candidates.length})
+                                RENDER KANDIDAT TERPILIH ({candidatesToRenderCount})
                               </span>
                             </>
                           )}

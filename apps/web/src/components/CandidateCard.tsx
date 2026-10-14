@@ -14,7 +14,7 @@ interface CandidateCardProps {
   candidate: Candidate;
   isSelected: boolean;
   onSelect: () => void;
-  onUpdateStatus: (status: "kept" | "rejected") => void;
+  onUpdateStatus: (status: "kept" | "rejected" | "proposed") => void;
   onUpdateTiming: (start_s: number, end_s: number) => void;
 }
 
@@ -51,6 +51,7 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
   };
 
   const isKept = candidate.status === "kept";
+  const isRendered = candidate.status === "rendered";
   const isRejected = candidate.status === "rejected";
 
   return (
@@ -79,7 +80,9 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
           </span>
           <span
             className={`text-[10px] font-bold px-2 py-0.5 border uppercase ${
-              isKept
+              isRendered
+                ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/40"
+                : isKept
                 ? "bg-green-500/20 text-green-400 border-green-500/40"
                 : isRejected
                 ? "bg-err/20 text-err border-err/40"
@@ -164,7 +167,7 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onUpdateStatus("kept");
+              onUpdateStatus(isKept ? "proposed" : "kept");
             }}
             className={`px-2.5 py-1 text-xs font-bold border transition-colors flex items-center gap-1 ${
               isKept
@@ -179,7 +182,7 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onUpdateStatus("rejected");
+              onUpdateStatus(isRejected ? "proposed" : "rejected");
             }}
             className={`px-2.5 py-1 text-xs font-bold border transition-colors flex items-center gap-1 ${
               isRejected

@@ -509,49 +509,87 @@ async def create_manual_job(
     }
     params_json = json.dumps(params_dict)
 
+    video_title: str | None = req.title
+    duration_s: float | None = None
+    try:
+        from clipforge.ingest.probe import probe_video
+        meta = await asyncio.wait_for(
+            probe_video(req.source_url, cookies_path=settings.cookies_file),
+            timeout=8.0,
+        )
+        if meta:
+            video_title = meta.title or video_title
+            duration_s = meta.duration_s
+            if not video_id:
+                video_id = meta.video_id
+    except Exception:
+        pass
+
+    if not duration_s:
+        max_end = max([e for (_, e, _) in clip_tuples], default=60.0)
+        duration_s = max_end + 10.0
+
     await db.execute(
         """
-        INSERT INTO jobs (id, source_url, video_id, genre, language, params_json, status, progress, created_at, updated_at)
-        VALUES (?, ?, ?, 'manual', ?, ?, ?, 0.0, ?, ?)
+        INSERT INTO jobs (id, source_url, video_id, title, duration_s, genre, language, params_json, status, stage, progress, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'manual', ?, ?, ?, 'awaiting_review', 1.0, ?, ?)
         """,
         (
             job_id,
             req.source_url,
             video_id,
+            video_title,
+            duration_s,
             req.language,
             params_json,
-            JobStatus.RUNNING.value,
+            JobStatus.AWAITING_REVIEW.value,
             now_iso,
             now_iso,
         ),
     )
-    await db.commit()
 
-    task = asyncio.create_task(
-        _execute_manual_clips_batch(
-            job_id=job_id,
-            clip_items=clip_tuples,
-            reframe_mode=req.reframe_mode,
-            subtitle_style=req.subtitle_style,
-            subtitle_position=req.subtitle_position,
+    for idx, (c_start, c_end, c_label) in enumerate(clip_tuples):
+        cand_id = f"cand_manual_{uuid.uuid4().hex[:8]}"
+        c_title = c_label or f"Manual Clip #{idx + 1}"
+        await db.execute(
+            """
+            INSERT INTO candidates (
+                id, job_id, rank, start_s, end_s, title, category,
+                status, final_score, hook_text, evidence_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'manual', 'kept', ?, ?, '{}')
+            """,
+            (
+                cand_id,
+                job_id,
+                idx + 1,
+                c_start,
+                c_end,
+                c_title,
+                round(0.99 - (idx * 0.01), 3),
+                c_title,
+            ),
         )
-    )
-    engine._active_tasks[job_id] = task
+    await db.commit()
 
     return JobResponse(
         id=job_id,
         source_url=req.source_url,
         video_id=video_id,
+        title=video_title,
+        duration_s=duration_s,
         genre="manual",
         language=req.language,
-        status=JobStatus.RUNNING,
-        progress=0.0,
+        status=JobStatus.AWAITING_REVIEW,
+        stage="awaiting_review",
+        progress=1.0,
         created_at=now_iso,
         updated_at=now_iso,
     )
 
 
-@router.post("/{job_id}/manual-clips", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{job_id}/manual-clips", status_code=status.HTTP_200_OK)
+@router.post("/{job_id}/clips", status_code=status.HTTP_200_OK)
 async def add_manual_clips_to_job(
     job_id: str,
     req: AddManualClipsRequest,
@@ -565,15 +603,6 @@ async def add_manual_clips_to_job(
         row = await cur.fetchone()
         if not row:
             raise JobNotFoundError(f"Job {job_id} not found")
-        source_url, genre, language, params_json, current_status, video_id, title = (
-            row[1],
-            row[2],
-            row[3],
-            row[4],
-            row[5],
-            row[6],
-            row[7],
-        )
 
     if not req.clips:
         raise HTTPException(status_code=400, detail="No clips provided")
@@ -593,35 +622,47 @@ async def add_manual_clips_to_job(
             raise HTTPException(status_code=400, detail="Clip duration must be at least 1.0 second")
         clip_tuples.append((start_s, end_s, item.title))
 
-    params = json.loads(params_json) if params_json else {}
-    reframe = req.reframe_mode or params.get("reframe_mode", "blur")
-    style = req.subtitle_style or params.get("subtitle_style", "classic_white")
-    position = req.subtitle_position or params.get("subtitle_position", "bottom")
+    async with db.execute(
+        "SELECT COALESCE(MAX(rank), 0) FROM candidates WHERE job_id = ?", (job_id,)
+    ) as cur:
+        max_r_row = await cur.fetchone()
+        base_rank = max_r_row[0] if max_r_row else 0
+
+    for idx, (c_start, c_end, c_label) in enumerate(clip_tuples):
+        cand_id = f"cand_manual_{uuid.uuid4().hex[:8]}"
+        c_title = c_label or f"Manual Clip #{base_rank + idx + 1}"
+        await db.execute(
+            """
+            INSERT INTO candidates (
+                id, job_id, rank, start_s, end_s, title, category,
+                status, final_score, hook_text, evidence_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'manual', 'kept', ?, ?, '{}')
+            """,
+            (
+                cand_id,
+                job_id,
+                base_rank + idx + 1,
+                c_start,
+                c_end,
+                c_title,
+                round(0.99 - (idx * 0.01), 3),
+                c_title,
+            ),
+        )
 
     now_iso = datetime.now(UTC).isoformat()
     await db.execute(
-        "UPDATE jobs SET error_code = NULL, error_message = NULL, status = ?, progress = 0.10, stage = 'manual_clipping', updated_at = ? WHERE id = ?",
-        (JobStatus.RENDERING.value, now_iso, job_id),
+        "UPDATE jobs SET error_code = NULL, error_message = NULL, status = ?, progress = 1.0, stage = 'awaiting_review', updated_at = ? WHERE id = ?",
+        (JobStatus.AWAITING_REVIEW.value, now_iso, job_id),
     )
     await db.commit()
 
-    task = asyncio.create_task(
-        _execute_manual_clips_batch(
-            job_id=job_id,
-            clip_items=clip_tuples,
-            reframe_mode=reframe,
-            subtitle_style=style,
-            subtitle_position=position,
-            previous_status=current_status,
-        )
-    )
-    engine._active_tasks[f"manual_{job_id}_{uuid.uuid4().hex[:6]}"] = task
-
     return {
-        "status": "processing",
+        "status": "ok",
         "job_id": job_id,
         "clips_count": len(clip_tuples),
-        "message": f"Mengekstrak {len(clip_tuples)} klip manual baru ke proyek ini",
+        "message": f"{len(clip_tuples)} klip manual berhasil ditambahkan ke tahap Review",
     }
 
 

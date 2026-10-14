@@ -377,7 +377,7 @@ export const AddManualClipModal: React.FC<AddManualClipModalProps> = ({
               ) : (
                 <>
                   <Zap className="w-4 h-4 fill-current" />
-                  <span>POTONG & TAMBAHKAN ({clips.length} KLIP)</span>
+                  <span>+ TAMBAH KE REVIEW ({clips.length} KLIP)</span>
                 </>
               )}
             </button>

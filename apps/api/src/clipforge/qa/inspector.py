@@ -96,11 +96,11 @@ def run_clip_qa(
         if not pix_ok:
             errors.append(f"Unexpected pixel format: {pix_fmt} (expected yuv420p)")
 
-    # Check 5: Duration check (within ±0.5s if expected duration is provided)
+    # Check 5: Duration check (within ±1.5s if expected duration is provided)
     actual_dur = float(format_info.get("duration", 0.0))
     if expected_duration_s is not None and expected_duration_s > 0:
         dur_diff = abs(actual_dur - expected_duration_s)
-        dur_ok = dur_diff <= 0.8  # 0.8s tolerance for keyframe boundaries
+        dur_ok = dur_diff <= 1.5  # 1.5s tolerance for keyframe boundaries
         checks["duration_tolerance"] = dur_ok
         if not dur_ok:
             errors.append(

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { SubtitleTrack, SubtitleWord } from "../types";
 import {
+  getClip,
   previewSubtitleFrame,
   rerenderClip,
   saveFinishedClip,
@@ -386,6 +387,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
       message: "Menyimpan revisi subtitle & urutan...",
     });
 
+    let progTimer: any = null;
     try {
       await updateClipSubtitles(clipId, words, stylePreset, subtitlePosition);
 
@@ -396,7 +398,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
       }));
 
       // Simulate step progress while server renders
-      const progTimer = setInterval(() => {
+      progTimer = setInterval(() => {
         setRerenderModal((prev) => {
           if (prev.status !== "rendering") return prev;
           const nextProg = Math.min(88, prev.progress + 12);
@@ -436,6 +438,29 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
         setRerenderModal((prev) => ({ ...prev, isOpen: false }));
       }, 1500);
     } catch (err: any) {
+      clearInterval(progTimer);
+
+      // Fallback resilience: check if clip actually finished rendering in background (e.g. Cloudflare 524 timeout)
+      try {
+        const checkClip = await getClip(clipId);
+        if (checkClip && checkClip.status === "done") {
+          try {
+            await saveFinishedClip(clipId);
+          } catch {}
+          setRerenderModal({
+            isOpen: true,
+            status: "success",
+            progress: 100,
+            message: "Re-render berhasil! Video final telah diperbarui.",
+          });
+          if (onClipUpdated) onClipUpdated();
+          setTimeout(() => {
+            setRerenderModal((prev) => ({ ...prev, isOpen: false }));
+          }, 1500);
+          return;
+        }
+      } catch {}
+
       setRerenderModal({
         isOpen: true,
         status: "error",
