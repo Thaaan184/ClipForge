@@ -66,3 +66,6 @@ class CandidateWindow(BaseModel):
     status: str = "proposed"
     user_start_s: float | None = None
     user_end_s: float | None = None
+    render_mode: str = "preset"
+    has_scene: bool = False
+    scene_layer_count: int = 0

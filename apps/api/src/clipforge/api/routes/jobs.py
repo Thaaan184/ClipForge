@@ -17,6 +17,7 @@ from clipforge.core.config import settings
 from clipforge.core.errors import HostNotAllowedError, InvalidUrlError, JobNotFoundError
 from clipforge.core.logging import logger
 from clipforge.db.connection import get_db
+from clipforge.ingest.segment import prepare_segment
 from clipforge.jobs.engine import engine
 from clipforge.jobs.events import broadcaster
 from clipforge.jobs.models import (
@@ -38,6 +39,8 @@ from clipforge.jobs.pipeline import (
     stage_validate,
 )
 from clipforge.jobs.state_machine import transition_job_status
+from clipforge.render.scene.legacy import legacy_reframe_to_scene
+from clipforge.render.scene.schema import SceneGraph
 from clipforge.timeline.models import CandidatesResponse, TimelineResponse
 from clipforge.timeline.service import get_candidates_for_job, get_timeline_for_job
 
@@ -925,6 +928,7 @@ class CandidateUpdatePayload(BaseModel):
     status: str | None = None  # kept | rejected | proposed
     user_start_s: float | None = None
     user_end_s: float | None = None
+    render_mode: str | None = None  # preset | freeform
 
 
 @router.patch("/candidates/{candidate_id}")
@@ -933,7 +937,7 @@ async def update_candidate_review(
     payload: CandidateUpdatePayload,
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict[str, Any]:
-    """Update review status or manual timing boundaries for a candidate."""
+    """Update review status, manual timing boundaries, or render mode for a candidate."""
     async with db.execute(
         "SELECT id, start_s, end_s FROM candidates WHERE id = ?", (candidate_id,)
     ) as cur:
@@ -956,12 +960,150 @@ async def update_candidate_review(
         updates.append("user_end_s = ?")
         params.append(payload.user_end_s)
 
+    if payload.render_mode is not None:
+        if payload.render_mode not in ("preset", "freeform"):
+            raise HTTPException(
+                status_code=400,
+                detail="render_mode must be either 'preset' or 'freeform'",
+            )
+        updates.append("render_mode = ?")
+        params.append(payload.render_mode)
+
     if updates:
         params.append(candidate_id)
         await db.execute(f"UPDATE candidates SET {', '.join(updates)} WHERE id = ?", tuple(params))
         await db.commit()
 
     return {"status": "updated", "candidate_id": candidate_id}
+
+
+class SegmentCreateRequest(BaseModel):
+    start_s: float
+    end_s: float
+
+
+@router.post("/{job_id}/segments", status_code=status.HTTP_202_ACCEPTED)
+async def create_job_segment(
+    job_id: str,
+    req: SegmentCreateRequest,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Prepare a bounded clip segment and 720p proxy preview video."""
+    async with db.execute(
+        "SELECT source_url FROM jobs WHERE id = ?", (job_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Job not found")
+        source_url = row[0]
+
+    return await prepare_segment(
+        source_url=source_url,
+        start_s=req.start_s,
+        end_s=req.end_s,
+        job_id=job_id,
+        cookies_path=settings.cookies_file,
+    )
+
+
+@router.get("/candidates/{candidate_id}/scene")
+async def get_candidate_scene(
+    candidate_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Retrieve scene graph for a candidate, or auto-generate initial scene from preset."""
+    async with db.execute(
+        """SELECT c.id, c.job_id, c.start_s, c.end_s, c.user_start_s, c.user_end_s,
+                  j.params_json, sg.scene_json
+           FROM candidates c
+           JOIN jobs j ON c.job_id = j.id
+           LEFT JOIN scene_graphs sg ON c.id = sg.candidate_id
+           WHERE c.id = ?""",
+        (candidate_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+    (
+        c_id,
+        job_id,
+        start_s,
+        end_s,
+        u_start,
+        u_end,
+        params_json_str,
+        scene_json,
+    ) = row
+
+    if scene_json:
+        return SceneGraph.model_validate_json(scene_json).model_dump()
+
+    # Parse job parameters
+    params: dict[str, Any] = {}
+    if params_json_str:
+        try:
+            params = json.loads(params_json_str)
+        except Exception:
+            params = {}
+
+    reframe_mode = params.get("reframe_mode", "blur")
+    sub_style = params.get("subtitle_style", "classic_white")
+    sub_pos = params.get("subtitle_position", "bottom")
+
+    actual_start = u_start if u_start is not None else start_s
+    actual_end = u_end if u_end is not None else end_s
+    src_w = 1920
+    src_h = 1080
+    fps = 30.0
+
+    scene = legacy_reframe_to_scene(
+        mode=reframe_mode or "blur",
+        source_dims=(src_w, src_h),
+        subtitle_cfg={
+            "preset": sub_style or "classic_white",
+            "position": sub_pos or "bottom",
+        },
+        start_s=actual_start,
+        end_s=actual_end,
+        fps=fps,
+    )
+    return scene.model_dump()
+
+
+@router.put("/candidates/{candidate_id}/scene")
+async def save_candidate_scene(
+    candidate_id: str,
+    scene: SceneGraph,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Save or update candidate scene graph and set render_mode to freeform."""
+    async with db.execute(
+        "SELECT job_id FROM candidates WHERE id = ?", (candidate_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        job_id = row[0]
+
+    now_iso = datetime.now(UTC).isoformat()
+    scene_json = scene.model_dump_json()
+
+    await db.execute(
+        """INSERT INTO scene_graphs (candidate_id, job_id, scene_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(candidate_id) DO UPDATE SET
+               scene_json = excluded.scene_json,
+               updated_at = excluded.updated_at""",
+        (candidate_id, job_id, scene_json, now_iso, now_iso),
+    )
+    await db.execute(
+        "UPDATE candidates SET render_mode = 'freeform' WHERE id = ?",
+        (candidate_id,),
+    )
+    await db.commit()
+
+    return scene.model_dump()
 
 
 class TriggerRenderRequest(BaseModel):

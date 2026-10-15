@@ -17,6 +17,7 @@ from clipforge.core.logging import logger
 from clipforge.db.connection import get_db
 from clipforge.render.engine import render_single_clip
 from clipforge.render.preview import render_subtitle_preview_frame
+from clipforge.render.scene.schema import SceneGraph
 from clipforge.subtitles import (
     SubtitleWord,
     create_kinetic_chunks,
@@ -840,3 +841,43 @@ async def download_clip_srt(
         media_type="text/plain",
         filename=f"{clip_id}.srt",
     )
+
+
+@router.get("/{clip_id}/scene")
+async def get_clip_scene(
+    clip_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Retrieve snapshot scene graph for a rendered clip."""
+    async with db.execute("SELECT scene_json FROM clips WHERE id = ?", (clip_id,)) as cur:
+        row = await cur.fetchone()
+        if not row or not row[0]:
+            async with db.execute(
+                "SELECT scene_json FROM finished_clips WHERE clip_id = ?", (clip_id,)
+            ) as f_cur:
+                f_row = await f_cur.fetchone()
+                if f_row and f_row[0]:
+                    row = f_row
+                else:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Scene graph snapshot not found for this clip",
+                    )
+    res_data: dict[str, Any] = json.loads(row[0])
+    return res_data
+
+
+@router.put("/{clip_id}/scene")
+async def update_clip_scene(
+    clip_id: str,
+    scene: SceneGraph,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Update snapshot scene graph for a rendered clip."""
+    scene_json = scene.model_dump_json()
+    await db.execute("UPDATE clips SET scene_json = ? WHERE id = ?", (scene_json, clip_id))
+    await db.execute(
+        "UPDATE finished_clips SET scene_json = ? WHERE clip_id = ?", (scene_json, clip_id)
+    )
+    await db.commit()
+    return scene.model_dump()

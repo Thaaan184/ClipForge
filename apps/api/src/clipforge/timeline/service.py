@@ -105,12 +105,13 @@ async def get_candidates_for_job(
 
     candidates: list[CandidateWindow] = []
     query = """
-        SELECT id, rank, start_s, end_s, peak_s, signal_score, llm_score, final_score,
-               category, title, hook_text, reason, evidence_json, flags_json,
-               status, user_start_s, user_end_s
-        FROM candidates
-        WHERE job_id = ?
-        ORDER BY rank ASC, final_score DESC
+        SELECT c.id, c.rank, c.start_s, c.end_s, c.peak_s, c.signal_score, c.llm_score, c.final_score,
+               c.category, c.title, c.hook_text, c.reason, c.evidence_json, c.flags_json,
+               c.status, c.user_start_s, c.user_end_s, COALESCE(c.render_mode, 'preset'), sg.scene_json
+        FROM candidates c
+        LEFT JOIN scene_graphs sg ON c.id = sg.candidate_id
+        WHERE c.job_id = ?
+        ORDER BY c.rank ASC, c.final_score DESC
     """
     async with db.execute(query, (job_id,)) as cursor:
         async for r in cursor:
@@ -124,6 +125,19 @@ async def get_candidates_for_job(
                 flags = json.loads(r[13])
             except Exception:
                 pass
+
+            render_mode = r[17] or "preset"
+            scene_raw = r[18]
+            has_scene = False
+            layer_count = 0
+            if scene_raw:
+                try:
+                    s_data = json.loads(scene_raw)
+                    layers = s_data.get("layers", [])
+                    has_scene = True
+                    layer_count = len(layers)
+                except Exception:
+                    pass
 
             candidates.append(
                 CandidateWindow(
@@ -145,6 +159,9 @@ async def get_candidates_for_job(
                     status=r[14] or "proposed",
                     user_start_s=r[15],
                     user_end_s=r[16],
+                    render_mode=render_mode,
+                    has_scene=has_scene,
+                    scene_layer_count=layer_count,
                 )
             )
 
