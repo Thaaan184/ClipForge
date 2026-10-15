@@ -299,8 +299,8 @@ export const AddManualClipModal: React.FC<AddManualClipModalProps> = ({
             onClick={handleAddRow}
             className="py-2 px-3 border border-dashed border-action/50 hover:border-action bg-action/5 hover:bg-action/10 text-action text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all"
           >
-            <Plus className="w-4 h-4" />
-            <span>+ TAMBAH BARIS KLIP LAGI</span>
+            <Plus className="w-4 h-4 stroke-[2.5]" />
+            <span>TAMBAH BARIS KLIP LAGI</span>
           </button>
 
           {/* Settings Grid */}

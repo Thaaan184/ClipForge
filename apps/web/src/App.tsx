@@ -954,8 +954,8 @@ export default function App(): JSX.Element {
                       onClick={() => handleOpenAddClipModal(currentJob)}
                       className="w-full md:w-auto py-2.5 px-4 bg-action text-bg font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.99] transition-all shadow-md"
                     >
-                      <Plus className="w-4 h-4" />
-                      <span>+ TAMBAH KLIP KE PROYEK INI</span>
+                      <Plus className="w-4 h-4 stroke-[2.5]" />
+                      <span>TAMBAH KLIP KE PROYEK INI</span>
                     </button>
                   </div>
                 </div>
