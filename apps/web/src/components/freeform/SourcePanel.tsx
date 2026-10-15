@@ -37,6 +37,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     editingLayerId,
     setEditingLayerId,
     updateLayerShape,
+    setSelectedLayerId,
   } = useSceneStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -44,6 +45,60 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [frameDims, setFrameDims] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
+
+  // Calculate exact inner video display dimensions to prevent letterbox offsets
+  const updateFrameDims = useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const pad = 16;
+    const cW = Math.max(0, rect.width - pad);
+    const cH = Math.max(0, rect.height - pad);
+    if (cW <= 0 || cH <= 0) return;
+
+    const video = videoRef.current;
+    let vAspect = 16 / 9;
+    if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+      vAspect = video.videoWidth / video.videoHeight;
+    } else if (sourceWidth > 0 && sourceHeight > 0) {
+      vAspect = sourceWidth / sourceHeight;
+    }
+
+    const cAspect = cW / cH;
+    let vW = cW;
+    let vH = cH;
+
+    if (cAspect > vAspect) {
+      // Container is wider than video -> height is constraint
+      vH = cH;
+      vW = Math.round(cH * vAspect);
+    } else {
+      // Container is taller than video -> width is constraint
+      vW = cW;
+      vH = Math.round(cW / vAspect);
+    }
+
+    setFrameDims({ width: vW, height: vH });
+  }, [sourceWidth, sourceHeight, videoRef]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    updateFrameDims();
+
+    const observer = new ResizeObserver(() => {
+      updateFrameDims();
+    });
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [updateFrameDims]);
 
   // Conversion: display canvas coordinates <-> original source pixels
   const getScale = useCallback(() => {
@@ -176,7 +231,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
         ctx.stroke();
       }
     }
-  }, [scene, selectedLayerId, draftShape, getScale]);
+  }, [scene, selectedLayerId, draftShape, getScale, frameDims]);
 
   useEffect(() => {
     drawOverlay();
@@ -184,9 +239,32 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
 
   // Pointer events for drawing shapes
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (activeTool === "select") return;
+    if (activeTool === "select") {
+      const canvas = canvasRef.current;
+      if (!canvas || !scene) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (sourceWidth / Math.max(1, rect.width));
+      const y = (e.clientY - rect.top) * (sourceHeight / Math.max(1, rect.height));
+
+      // Hit test existing layers in reverse order
+      const reversed = [...scene.layers].reverse();
+      for (const lyr of reversed) {
+        if (!lyr.visible) continue;
+        const b = lyr.shape.bbox;
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+          setSelectedLayerId(lyr.id);
+          return;
+        }
+      }
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {}
+
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -271,7 +349,14 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     }
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (e && canvas) {
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+
     if (!isDrawing || !draftShape) return;
     if (activeTool === "rect" || activeTool === "ellipse") {
       setIsDrawing(false);
@@ -383,54 +468,69 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
       {/* Video + Interactive Canvas Container */}
       <div
         ref={containerRef}
-        className="relative flex-1 bg-black flex items-center justify-center overflow-hidden"
+        className="relative flex-1 bg-black flex items-center justify-center p-2 overflow-hidden"
       >
-        <video
-          ref={videoRef}
-          src={proxyUrl}
-          playsInline
-          muted
-          loop
-          className="max-h-full max-w-full object-contain pointer-events-none"
-        />
+        <div
+          className="relative shadow-lg"
+          style={{
+            width: frameDims.width > 0 ? `${frameDims.width}px` : "100%",
+            height: frameDims.height > 0 ? `${frameDims.height}px` : "100%",
+          }}
+        >
+          <video
+            ref={videoRef}
+            src={proxyUrl}
+            playsInline
+            muted
+            loop
+            onLoadedMetadata={updateFrameDims}
+            className="w-full h-full object-fill pointer-events-none block"
+          />
 
-        <canvas
-          ref={canvasRef}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          className="absolute inset-0 w-full h-full cursor-crosshair"
-        />
+          <canvas
+            ref={canvasRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            className="absolute inset-0 w-full h-full cursor-crosshair"
+          />
 
-        {/* Draft Confirmation Buttons Near Shape */}
-        {draftShape && draftShape.isComplete && (
-          <div
-            className="absolute z-20 flex items-center gap-1 bg-[#141414] border border-[#FF6A00] rounded px-2 py-1 shadow-lg"
-            style={{
-              left: `${Math.min(
-                window.innerWidth * 0.4,
-                (draftShape.bbox.x + draftShape.bbox.w / 2) / getScale().sx
-              )}px`,
-              top: `${Math.max(
-                40,
-                (draftShape.bbox.y + draftShape.bbox.h) / getScale().sy + 10
-              )}px`,
-            }}
-          >
-            <button
-              onClick={handleConfirmDraft}
-              className="flex items-center gap-1 px-2 py-0.5 bg-[#FF6A00] text-black text-xs font-semibold rounded hover:bg-[#e05d00]"
+          {/* Draft Confirmation Buttons Near Shape */}
+          {draftShape && draftShape.isComplete && (
+            <div
+              className="absolute z-20 flex items-center gap-1 bg-[#141414] border border-[#FF6A00] rounded px-2 py-1 shadow-lg"
+              style={{
+                left: `${Math.max(
+                  10,
+                  Math.min(
+                    (frameDims.width || 400) - 150,
+                    (draftShape.bbox.x + draftShape.bbox.w / 2) / getScale().sx - 60
+                  )
+                )}px`,
+                top: `${Math.max(
+                  10,
+                  Math.min(
+                    (frameDims.height || 300) - 40,
+                    (draftShape.bbox.y + draftShape.bbox.h) / getScale().sy + 10
+                  )
+                )}px`,
+              }}
             >
-              <Check size={12} /> Jadikan Cut
-            </button>
-            <button
-              onClick={handleCancelDraft}
-              className="p-1 text-[#888888] hover:text-white rounded hover:bg-[#2A2A2A]"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        )}
+              <button
+                onClick={handleConfirmDraft}
+                className="flex items-center gap-1 px-2 py-0.5 bg-[#FF6A00] text-black text-xs font-semibold rounded hover:bg-[#e05d00]"
+              >
+                <Check size={12} /> Jadikan Cut
+              </button>
+              <button
+                onClick={handleCancelDraft}
+                className="p-1 text-[#888888] hover:text-white rounded hover:bg-[#2A2A2A]"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Bottom Hint */}
