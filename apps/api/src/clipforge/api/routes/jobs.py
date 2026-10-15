@@ -554,10 +554,11 @@ async def create_manual_job(
         await db.execute(
             """
             INSERT INTO candidates (
-                id, job_id, rank, start_s, end_s, peak_s, title, category,
-                status, final_score, hook_text, evidence_json
+                id, job_id, rank, start_s, end_s, peak_s, signal_score, llm_score,
+                final_score, category, title, hook_text, reason, evidence_json, status,
+                user_start_s, user_end_s
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', 'kept', ?, ?, '{}')
+            VALUES (?, ?, ?, ?, ?, ?, 1.0, 1.0, ?, 'manual', ?, ?, 'Manual clip', '{}', 'kept', ?, ?)
             """,
             (
                 cand_id,
@@ -566,9 +567,11 @@ async def create_manual_job(
                 c_start,
                 c_end,
                 c_start,
-                c_title,
                 round(0.99 - (idx * 0.01), 3),
                 c_title,
+                c_title,
+                c_start,
+                c_end,
             ),
         )
     await db.commit()
@@ -635,10 +638,11 @@ async def add_manual_clips_to_job(
         await db.execute(
             """
             INSERT INTO candidates (
-                id, job_id, rank, start_s, end_s, peak_s, title, category,
-                status, final_score, hook_text, evidence_json
+                id, job_id, rank, start_s, end_s, peak_s, signal_score, llm_score,
+                final_score, category, title, hook_text, reason, evidence_json, status,
+                user_start_s, user_end_s
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', 'kept', ?, ?, '{}')
+            VALUES (?, ?, ?, ?, ?, ?, 1.0, 1.0, ?, 'manual', ?, ?, 'Manual clip', '{}', 'kept', ?, ?)
             """,
             (
                 cand_id,
@@ -647,9 +651,11 @@ async def add_manual_clips_to_job(
                 c_start,
                 c_end,
                 c_start,
-                c_title,
                 round(0.99 - (idx * 0.01), 3),
                 c_title,
+                c_title,
+                c_start,
+                c_end,
             ),
         )
 
