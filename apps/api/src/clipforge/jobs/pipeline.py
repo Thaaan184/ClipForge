@@ -25,6 +25,7 @@ from clipforge.ingest.probe import probe_video
 from clipforge.llm.client import evaluate_candidate_scout
 from clipforge.quality.gate import evaluate_quality_gate
 from clipforge.render.engine import render_single_clip
+from clipforge.render.scene.schema import SceneGraph
 from clipforge.signals.audio import extract_audio_features
 from clipforge.signals.chat import extract_chat_features
 from clipforge.signals.heatmap import extract_heatmap_features
@@ -560,10 +561,12 @@ async def stage_render_clips(
     if cand_ids and isinstance(cand_ids, list) and len(cand_ids) > 0:
         placeholders = ",".join("?" for _ in cand_ids)
         query = f"""
-            SELECT id, rank, COALESCE(user_start_s, start_s), COALESCE(user_end_s, end_s), title, category
-            FROM candidates
-            WHERE job_id = ? AND id IN ({placeholders})
-            ORDER BY rank ASC, final_score DESC
+            SELECT c.id, c.rank, COALESCE(c.user_start_s, c.start_s), COALESCE(c.user_end_s, c.end_s),
+                   c.title, c.category, COALESCE(c.render_mode, 'preset'), sg.scene_json
+            FROM candidates c
+            LEFT JOIN scene_graphs sg ON c.id = sg.candidate_id
+            WHERE c.job_id = ? AND c.id IN ({placeholders})
+            ORDER BY c.rank ASC, c.final_score DESC
         """
         params: tuple[Any, ...] = (job_id, *cand_ids)
     else:
@@ -575,18 +578,22 @@ async def stage_render_clips(
 
         if kept_count > 0:
             query = """
-                SELECT id, rank, COALESCE(user_start_s, start_s), COALESCE(user_end_s, end_s), title, category
-                FROM candidates
-                WHERE job_id = ? AND status = 'kept'
-                ORDER BY rank ASC, final_score DESC
+                SELECT c.id, c.rank, COALESCE(c.user_start_s, c.start_s), COALESCE(c.user_end_s, c.end_s),
+                       c.title, c.category, COALESCE(c.render_mode, 'preset'), sg.scene_json
+                FROM candidates c
+                LEFT JOIN scene_graphs sg ON c.id = sg.candidate_id
+                WHERE c.job_id = ? AND c.status = 'kept'
+                ORDER BY c.rank ASC, c.final_score DESC
             """
             params = (job_id,)
         else:
             query = """
-                SELECT id, rank, COALESCE(user_start_s, start_s), COALESCE(user_end_s, end_s), title, category
-                FROM candidates
-                WHERE job_id = ? AND status != 'rejected'
-                ORDER BY rank ASC, final_score DESC
+                SELECT c.id, c.rank, COALESCE(c.user_start_s, c.start_s), COALESCE(c.user_end_s, c.end_s),
+                       c.title, c.category, COALESCE(c.render_mode, 'preset'), sg.scene_json
+                FROM candidates c
+                LEFT JOIN scene_graphs sg ON c.id = sg.candidate_id
+                WHERE c.job_id = ? AND c.status != 'rejected'
+                ORDER BY c.rank ASC, c.final_score DESC
                 LIMIT ?
             """
             params = (job_id, target_count)
@@ -606,6 +613,8 @@ async def stage_render_clips(
                     "duration_s": dur,
                     "title": r[4],
                     "category": r[5],
+                    "render_mode": r[6],
+                    "scene_json": r[7],
                 }
             )
 
@@ -629,6 +638,31 @@ async def stage_render_clips(
             (cand_id,),
         )
         await db.commit()
+
+        # Check if candidate is unedited freeform
+        if cand.get("render_mode") == "freeform" and not cand.get("scene_json"):
+            logger.warning(
+                "skipping_unedited_freeform_candidate",
+                job_id=job_id,
+                candidate_id=cand_id,
+            )
+            await db.execute(
+                "UPDATE candidates SET status = 'kept' WHERE id = ?",
+                (cand_id,),
+            )
+            await db.commit()
+            continue
+
+        cand_scene: SceneGraph | None = None
+        if cand.get("render_mode") == "freeform" and cand.get("scene_json"):
+            try:
+                cand_scene = SceneGraph.model_validate_json(str(cand["scene_json"]))
+            except Exception as exc:
+                logger.warning(
+                    "candidate_scene_parse_failed",
+                    candidate_id=cand_id,
+                    error=str(exc),
+                )
 
         clip_id = str(uuid.uuid4())
         clip_folder = clips_dir / clip_id
@@ -735,6 +769,7 @@ async def stage_render_clips(
                 ass_path=ass_file if has_subtitles else None,
                 mode=reframe_mode,
                 expected_duration_s=cand["duration_s"],
+                scene_graph=cand_scene,
             )
         except Exception as exc:
             logger.error(
@@ -757,18 +792,19 @@ async def stage_render_clips(
 
         # 4. Insert clip into DB
         r_params_json = json.dumps({
-            "reframe_mode": reframe_mode,
+            "reframe_mode": reframe_mode if not cand_scene else "freeform",
             "subtitle_style": subtitle_style,
             "subtitle_position": subtitle_position,
         })
         qa_json_str = json.dumps(render_res["qa"])
+        cand_scene_str = cand.get("scene_json")
 
         await db.execute(
             """
             INSERT INTO clips (
                 id, candidate_id, job_id, status, video_path, thumb_path, srt_path,
-                width, height, duration_s, render_params_json, qa_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1080, 1920, ?, ?, ?, ?)
+                width, height, duration_s, render_params_json, qa_json, scene_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1080, 1920, ?, ?, ?, ?, ?)
             """,
             (
                 clip_id,
@@ -781,6 +817,7 @@ async def stage_render_clips(
                 cand["duration_s"],
                 r_params_json,
                 qa_json_str,
+                cand_scene_str,
                 now_iso,
             ),
         )

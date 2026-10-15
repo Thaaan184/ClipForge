@@ -4,6 +4,27 @@ export interface ManualClipSegment {
   title?: string;
 }
 
+export const REFRAME_OPTIONS = [
+  { value: "blur", label: "Blur Pillarbox (Rec)" },
+  { value: "center", label: "Center Crop" },
+  { value: "stacked", label: "Stacked Cam/Game" },
+] as const;
+
+export const SUBTITLE_PRESET_OPTIONS = [
+  { value: "classic_white", label: "Classic White (Putih)" },
+  { value: "fire_orange", label: "Fire Orange (Oranye)" },
+  { value: "hormozi_bold", label: "Hormozi Bold (Kuning/Hijau)" },
+  { value: "mrbeast_box", label: "MrBeast Box (Bold Gold)" },
+  { value: "neon_glow", label: "Neon Glow (Cyan/Magenta)" },
+  { value: "minimal_clean", label: "Minimal Clean (Putih Minimalis)" },
+  { value: "none", label: "Tanpa Subtitle (No Subtitle)" },
+] as const;
+
+export const SUBTITLE_POSITION_OPTIONS = [
+  { value: "bottom", label: "Bawah (Standar Y=1680)" },
+  { value: "top", label: "Atas (YT Shorts Safe Y=420)" },
+] as const;
+
 export interface JobParams {
   clip_count?: number;
   reframe_mode?: "blur" | "center" | "stacked";
@@ -78,6 +99,10 @@ export interface Candidate {
   evidence: CandidateEvidence;
   flags: string[];
   status: "proposed" | "kept" | "rejected" | "rendered";
+  render_mode?: "preset" | "freeform";
+  has_scene?: boolean;
+  scene_layer_count?: number;
+  scene_graph?: SceneGraph | null;
 }
 
 export interface SignalPoint {
@@ -149,6 +174,124 @@ export interface FinishedClip {
   width: number;
   height: number;
   subtitles_json?: string | null;
+  created_at: string;
+  updated_at: string;
+  scene_graph?: SceneGraph | null;
+}
+
+// -------------------------------------------------------------
+// Scene Graph v1.1 Definitions (Freeform Studio Single Source of Truth)
+// -------------------------------------------------------------
+
+export interface BBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export type Point2D = [number, number];
+
+export interface ShapeConfig {
+  type: "rect" | "ellipse" | "lasso";
+  bbox: BBox;
+  points?: Point2D[] | null;
+}
+
+export interface TransformConfig {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+  rotation: number;
+  lock_aspect: boolean;
+  z: number;
+}
+
+export interface ShadowConfig {
+  enabled: boolean;
+  color: string;
+  alpha: number;
+  blur: number;
+  offset_x: number;
+  offset_y: number;
+}
+
+export interface StyleConfig {
+  opacity: number;
+  corner_radius: number;
+  border_width: number;
+  border_color: string;
+  shadow: ShadowConfig;
+}
+
+export interface LayerConfig {
+  id: string;
+  name: string;
+  source_id: string;
+  visible: boolean;
+  locked: boolean;
+  time_offset: number;
+  shape: ShapeConfig;
+  transform: TransformConfig;
+  style: StyleConfig;
+}
+
+export interface SourceConfig {
+  id: string;
+  width: number;
+  height: number;
+  fps: number;
+  start: number;
+  end: number;
+  padding_before: number;
+}
+
+export interface GradientConfig {
+  angle: number;
+  stops: string[];
+}
+
+export interface BackgroundConfig {
+  type: "blur_source" | "solid" | "gradient" | "secondary_source";
+  blur_sigma: number;
+  color: string;
+  gradient?: GradientConfig | null;
+  secondary_source_id?: string | null;
+}
+
+export interface CanvasConfig {
+  width: number;
+  height: number;
+  fps: number;
+}
+
+export interface SubtitlesConfig {
+  enabled: boolean;
+  preset: string;
+  position: string;
+  position_y?: number | null;
+  font_size?: number | null;
+  color?: string | null;
+  highlight_color?: string | null;
+  outline_color?: string | null;
+  outline_width?: number | null;
+  max_words_per_line?: number | null;
+}
+
+export interface SceneGraph {
+  version: string;
+  canvas: CanvasConfig;
+  background: BackgroundConfig;
+  sources: SourceConfig[];
+  layers: LayerConfig[];
+  subtitles: SubtitlesConfig;
+}
+
+export interface ScenePreset {
+  id: string;
+  name: string;
+  scene: SceneGraph;
   created_at: string;
   updated_at: string;
 }

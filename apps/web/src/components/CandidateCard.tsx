@@ -8,6 +8,9 @@ import {
   Play,
   Volume2,
   X,
+  Palette,
+  AlertTriangle,
+  Sliders,
 } from "lucide-react";
 
 interface CandidateCardProps {
@@ -16,6 +19,8 @@ interface CandidateCardProps {
   onSelect: () => void;
   onUpdateStatus: (status: "kept" | "rejected" | "proposed") => void;
   onUpdateTiming: (start_s: number, end_s: number) => void;
+  onOpenStudio?: () => void;
+  onToggleRenderMode?: (mode: "preset" | "freeform") => void;
 }
 
 export const CandidateCard: React.FC<CandidateCardProps> = ({
@@ -24,6 +29,8 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
   onSelect,
   onUpdateStatus,
   onUpdateTiming,
+  onOpenStudio,
+  onToggleRenderMode,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const currentStart = candidate.user_start_s ?? candidate.start_s;
@@ -157,6 +164,73 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
           <span className="px-1.5 py-0.5 border border-err/40 text-err bg-err/10 font-bold">
             {candidate.flags.join(", ")}
           </span>
+        )}
+      </div>
+
+      {/* Freeform vs Preset Render Mode Switch */}
+      <div className="flex flex-col gap-1.5 border-t border-line/60 pt-2 text-xs font-mono">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-muted uppercase tracking-wider flex items-center gap-1">
+            <Sliders className="w-3 h-3 text-action" />
+            Mode Render
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleRenderMode?.("preset");
+              }}
+              className={`px-2 py-0.5 text-[10px] font-bold border rounded-sm transition ${
+                candidate.render_mode !== "freeform"
+                  ? "bg-action text-bg border-action font-bold"
+                  : "bg-surface text-muted border-line hover:text-copy"
+              }`}
+            >
+              PRESET
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleRenderMode?.("freeform");
+              }}
+              className={`px-2 py-0.5 text-[10px] font-bold border rounded-sm transition ${
+                candidate.render_mode === "freeform"
+                  ? "bg-[#00FFCC] text-black border-[#00FFCC] font-bold"
+                  : "bg-surface text-muted border-line hover:text-copy"
+              }`}
+            >
+              KANVAS
+            </button>
+          </div>
+        </div>
+
+        {candidate.render_mode === "freeform" && (
+          <div className="flex items-center justify-between gap-1 mt-1 bg-surface/80 p-1.5 border border-line">
+            {candidate.has_scene ? (
+              <span className="text-[10px] text-[#00FFCC] flex items-center gap-1">
+                <Check className="w-3 h-3" />
+                {candidate.scene_layer_count ?? 1} Layer Siap
+              </span>
+            ) : (
+              <span className="text-[10px] text-amber-400 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                Belum Diedit
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenStudio?.();
+              }}
+              className="px-2 py-0.5 bg-[#FF6A00] hover:bg-[#E55F00] text-black font-bold text-[10px] rounded-sm flex items-center gap-1 shadow"
+            >
+              <Palette className="w-3 h-3" />
+              BUKA STUDIO
+            </button>
+          </div>
         )}
       </div>
 

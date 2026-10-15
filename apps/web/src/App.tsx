@@ -19,11 +19,13 @@ import {
   listJobs,
   triggerRender,
   updateCandidate,
+  updateCandidateRenderMode,
 } from "./api";
 import { AddManualClipModal } from "./components/AddManualClipModal";
 import { CandidateCard } from "./components/CandidateCard";
 import { ClipPlayer } from "./components/ClipPlayer";
 import { EvaluationView } from "./components/EvaluationView";
+import { FreeformStudio } from "./components/freeform/FreeformStudio";
 import { JobForm } from "./components/JobForm";
 import { ProgressTracker } from "./components/ProgressTracker";
 import { SubtitleEditor } from "./components/SubtitleEditor";
@@ -35,6 +37,9 @@ import {
   Job,
   JobParams,
   ManualClipSegment,
+  REFRAME_OPTIONS,
+  SUBTITLE_POSITION_OPTIONS,
+  SUBTITLE_PRESET_OPTIONS,
   SubtitleTrack,
   TimelineData,
 } from "./types";
@@ -117,6 +122,9 @@ export default function App(): JSX.Element {
   // Modal for adding manual clips to existing project
   const [showAddClipModal, setShowAddClipModal] = useState(false);
   const [modalTargetJob, setModalTargetJob] = useState<Job | null>(null);
+
+  // Modal for Freeform Canvas Studio
+  const [studioCandidate, setStudioCandidate] = useState<Candidate | null>(null);
 
   // Render configuration for candidate processing
   const [renderSubtitleStyle, setRenderSubtitleStyle] = useState<string>("classic_white");
@@ -547,13 +555,53 @@ export default function App(): JSX.Element {
     }
   };
 
+  const handleToggleRenderMode = async (candId: string, mode: "preset" | "freeform") => {
+    try {
+      await updateCandidateRenderMode(candId, mode);
+      setCandidates((prev) =>
+        prev.map((c) => (c.id === candId ? { ...c, render_mode: mode } : c))
+      );
+      showToast(`Mode render kandidat diubah ke ${mode === "freeform" ? "KANVAS BEBAS" : "PRESET"}`);
+    } catch (err) {
+      showToast(`Gagal mengubah mode render: ${err}`);
+    }
+  };
+
+  const handleStudioSaved = (candId: string, scene: any) => {
+    setCandidates((prev) =>
+      prev.map((c) =>
+        c.id === candId
+          ? {
+              ...c,
+              render_mode: "freeform",
+              has_scene: true,
+              scene_layer_count: scene.layers?.length || 1,
+            }
+          : c
+      )
+    );
+  };
+
   const handleTriggerRender = async () => {
     if (!currentJob) return;
+
+    const kept = candidates.filter((c) => c.status === "kept");
+    const unrejected = candidates.filter((c) => c.status !== "rejected");
+    const targetCands = kept.length > 0 ? kept : unrejected;
+
+    // Check if any candidate has freeform mode without an edited scene
+    const uneditedFreeform = targetCands.filter(
+      (c) => c.render_mode === "freeform" && !c.has_scene
+    );
+    if (uneditedFreeform.length > 0) {
+      const proceed = window.confirm(
+        `Perhatian: Ada ${uneditedFreeform.length} kandidat dengan mode KANVAS yang belum diedit di Studio Kanvas.\nKandidat tersebut akan dilewati pada render batch ini.\n\nLanjutkan render kandidat lainnya?`
+      );
+      if (!proceed) return;
+    }
+
     setIsRendering(true);
     try {
-      const kept = candidates.filter((c) => c.status === "kept");
-      const unrejected = candidates.filter((c) => c.status !== "rejected");
-      const targetCands = kept.length > 0 ? kept : unrejected;
       const candIds = targetCands.length > 0 ? targetCands.map((c) => c.id) : undefined;
 
       await triggerRender(currentJob.id, {
@@ -909,8 +957,8 @@ export default function App(): JSX.Element {
                       onClick={() => handleOpenAddClipModal(currentJob)}
                       className="w-full md:w-auto py-2.5 px-4 bg-action text-bg font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.99] transition-all shadow-md"
                     >
-                      <Plus className="w-4 h-4" />
-                      <span>+ TAMBAH KLIP KE PROYEK INI</span>
+                      <Plus className="w-4 h-4 stroke-[2.5]" />
+                      <span>TAMBAH KLIP KE PROYEK INI</span>
                     </button>
                   </div>
                 </div>
@@ -1009,6 +1057,7 @@ export default function App(): JSX.Element {
                       </div>
                     )}
 
+                    {/* Header Title */}
                     <div className="flex items-center justify-between border-b border-line pb-3 flex-wrap gap-3">
                       <div>
                         <h3 className="font-extrabold text-base md:text-lg uppercase tracking-tight text-copy">
@@ -1018,60 +1067,79 @@ export default function App(): JSX.Element {
                           Pilih dan kurasi momen terbaik sebelum dibakar ke video 9:16 vertikal.
                         </p>
                       </div>
+                      <div className="text-xs font-mono text-muted">
+                        Klip Terpilih: <span className="font-bold text-action">{candidatesToRenderCount}</span> / {candidates.length}
+                      </div>
+                    </div>
 
-                      <div className="flex items-center gap-3 flex-wrap">
-                        {/* Preset Subtitle Selector */}
-                        <div className="flex items-center gap-2 bg-card border border-line px-3 py-2 text-xs">
-                          <span className="text-muted font-bold uppercase tracking-wider text-[11px]">Subtitle:</span>
-                          <select
-                            value={renderSubtitleStyle}
-                            onChange={(e) => setRenderSubtitleStyle(e.target.value)}
-                            disabled={isRendering || currentJob.status === "rendering"}
-                            className="bg-transparent text-copy text-xs font-semibold focus:outline-none cursor-pointer"
-                          >
-                            <option value="classic_white">Classic White</option>
-                            <option value="hormozi_bold">Hormozi Bold (Kuning)</option>
-                            <option value="fire_orange">Fire Orange</option>
-                            <option value="mrbeast_box">MrBeast Box</option>
-                            <option value="neon_glow">Neon Glow</option>
-                            <option value="minimal_clean">Minimal Clean</option>
-                            <option value="none">Tanpa Subtitle (None)</option>
-                          </select>
-                        </div>
+                    {/* Slate Configuration Bar — Matches Home Page Layout */}
+                    <div className="p-4 md:p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 bg-card/40 border border-line text-xs">
+                      {/* Reframe Mode Selector */}
+                      <div>
+                        <label className="block text-muted uppercase font-bold tracking-wider mb-2 text-[11px]">
+                          Reframe 9:16
+                        </label>
+                        <select
+                          value={renderReframeMode}
+                          onChange={(e) => setRenderReframeMode(e.target.value)}
+                          disabled={isRendering || currentJob.status === "rendering"}
+                          className="w-full bg-bg border border-line py-2 px-3 text-copy text-xs focus:border-action focus:outline-none"
+                        >
+                          {REFRAME_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                        {/* Reframe Mode Selector */}
-                        <div className="flex items-center gap-2 bg-card border border-line px-3 py-2 text-xs">
-                          <span className="text-muted font-bold uppercase tracking-wider text-[11px]">Reframe:</span>
-                          <select
-                            value={renderReframeMode}
-                            onChange={(e) => setRenderReframeMode(e.target.value)}
-                            disabled={isRendering || currentJob.status === "rendering"}
-                            className="bg-transparent text-copy text-xs font-semibold focus:outline-none cursor-pointer"
-                          >
-                            <option value="blur">Blur Pillarbox</option>
-                            <option value="center">Center Crop</option>
-                            <option value="stacked">Stacked Cam/Game</option>
-                          </select>
-                        </div>
+                      {/* Preset Subtitle Selector */}
+                      <div>
+                        <label className="block text-muted uppercase font-bold tracking-wider mb-2 text-[11px]">
+                          Preset Subtitle
+                        </label>
+                        <select
+                          value={renderSubtitleStyle}
+                          onChange={(e) => setRenderSubtitleStyle(e.target.value)}
+                          disabled={isRendering || currentJob.status === "rendering"}
+                          className="w-full bg-bg border border-line py-2 px-3 text-copy text-xs focus:border-action focus:outline-none"
+                        >
+                          {SUBTITLE_PRESET_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                        {/* Subtitle Location Preset */}
-                        <div className="flex items-center gap-2 bg-card border border-line px-3 py-2 text-xs">
-                          <span className="text-muted font-bold uppercase tracking-wider text-[11px]">Lokasi:</span>
-                          <select
-                            value={renderSubtitlePosition}
-                            onChange={(e) => setRenderSubtitlePosition(e.target.value)}
-                            disabled={isRendering || currentJob.status === "rendering" || renderSubtitleStyle === "none"}
-                            className="bg-transparent text-copy text-xs font-semibold focus:outline-none cursor-pointer"
-                          >
-                            <option value="bottom">Bawah (Standar Y=1680)</option>
-                            <option value="top">Atas (YT Shorts Safe Y=420)</option>
-                          </select>
-                        </div>
+                      {/* Subtitle Location Preset */}
+                      <div>
+                        <label className="block text-muted uppercase font-bold tracking-wider mb-2 text-[11px]">
+                          Lokasi Subtitle
+                        </label>
+                        <select
+                          value={renderSubtitlePosition}
+                          onChange={(e) => setRenderSubtitlePosition(e.target.value)}
+                          disabled={isRendering || currentJob.status === "rendering" || renderSubtitleStyle === "none"}
+                          className="w-full bg-bg border border-line py-2 px-3 text-copy text-xs focus:border-action focus:outline-none"
+                        >
+                          {SUBTITLE_POSITION_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
+                      {/* Primary Render Button */}
+                      <div className="flex flex-col justify-end">
+                        <label className="hidden lg:block text-muted uppercase font-bold tracking-wider mb-2 text-[11px]">
+                          Eksekusi Render
+                        </label>
                         <button
                           onClick={handleTriggerRender}
                           disabled={isRendering || currentJob.status === "rendering"}
-                          className="btn-action flex items-center gap-2 px-6 py-2.5 text-xs md:text-sm font-bold text-bg disabled:opacity-50"
+                          className="w-full py-2 px-4 bg-action text-bg font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.99] transition-all shadow-md disabled:opacity-50 h-[37px]"
                         >
                           {isRendering || currentJob.status === "rendering" ? (
                             <>
@@ -1081,9 +1149,7 @@ export default function App(): JSX.Element {
                           ) : (
                             <>
                               <Play className="w-4 h-4 fill-bg" />
-                              <span>
-                                RENDER KANDIDAT TERPILIH ({candidatesToRenderCount})
-                              </span>
+                              <span>RENDER ({candidatesToRenderCount} KLIP)</span>
                             </>
                           )}
                         </button>
@@ -1099,6 +1165,8 @@ export default function App(): JSX.Element {
                           onSelect={() => setSelectedCandId(cand.id)}
                           onUpdateStatus={(st) => handleUpdateStatus(cand.id, st)}
                           onUpdateTiming={(s, e) => handleUpdateTiming(cand.id, s, e)}
+                          onOpenStudio={() => setStudioCandidate(cand)}
+                          onToggleRenderMode={(mode) => handleToggleRenderMode(cand.id, mode)}
                         />
                       ))}
                     </div>
@@ -1471,6 +1539,19 @@ export default function App(): JSX.Element {
           }}
           onSubmit={handleAddManualClipsToExistingJob}
           loading={loading}
+        />
+      )}
+
+      {/* Fullscreen Modal: Freeform Canvas Studio */}
+      {studioCandidate && currentJob && (
+        <FreeformStudio
+          jobId={currentJob.id}
+          candidateId={studioCandidate.id}
+          candidateTitle={studioCandidate.title || `Highlight #${studioCandidate.rank}`}
+          clipStart={studioCandidate.user_start_s ?? studioCandidate.start_s}
+          clipEnd={studioCandidate.user_end_s ?? studioCandidate.end_s}
+          onClose={() => setStudioCandidate(null)}
+          onSaved={(scene) => handleStudioSaved(studioCandidate.id, scene)}
         />
       )}
 

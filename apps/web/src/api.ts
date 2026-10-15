@@ -5,6 +5,8 @@ import {
   Job,
   JobParams,
   ManualClipSegment,
+  SceneGraph,
+  ScenePreset,
   SubtitleTrack,
   SubtitleWord,
   TimelineData,
@@ -349,6 +351,159 @@ export async function listAllClips(limit = 50): Promise<Clip[]> {
   }
   return res.json();
 }
+
+// -------------------------------------------------------------
+// Freeform Canvas Studio APIs
+// -------------------------------------------------------------
+
+export function getSegmentProxyUrl(segmentId: string): string {
+  return `${API_BASE}/api/segments/${segmentId}/proxy`;
+}
+
+export async function createJobSegment(
+  jobId: string,
+  start_s: number,
+  end_s: number
+): Promise<{ segment_id: string; status: string }> {
+  const res = await fetch(`${API_BASE}/api/jobs/${jobId}/segments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ start_s, end_s }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Failed to prepare segment" }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getSegmentInfo(segmentId: string): Promise<{
+  segment_id: string;
+  status: string;
+  full_width?: number;
+  full_height?: number;
+  proxy_width?: number;
+  proxy_height?: number;
+  fps?: number;
+  duration_s?: number;
+  padding_before?: number;
+  error?: string | null;
+}> {
+  const res = await fetch(`${API_BASE}/api/segments/${segmentId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to get segment info for ${segmentId}`);
+  }
+  return res.json();
+}
+
+export async function getCandidateScene(candidateId: string): Promise<SceneGraph> {
+  const res = await fetch(`${API_BASE}/api/jobs/candidates/${candidateId}/scene`);
+  if (!res.ok) {
+    throw new Error(`Failed to get candidate scene`);
+  }
+  return res.json();
+}
+
+export async function saveCandidateScene(
+  candidateId: string,
+  scene: SceneGraph
+): Promise<SceneGraph> {
+  const res = await fetch(`${API_BASE}/api/jobs/candidates/${candidateId}/scene`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(scene),
+  });
+  if (!res.ok) {
+    let msg = `Gagal menyimpan kanvas (HTTP ${res.status})`;
+    try {
+      const err = await res.json();
+      if (typeof err.detail === "string") {
+        msg = err.detail;
+      } else if (Array.isArray(err.detail)) {
+        msg = err.detail.map((d: any) => `${d.loc?.slice(-1)[0] || "field"}: ${d.msg}`).join("; ");
+      } else if (err.detail) {
+        msg = JSON.stringify(err.detail);
+      }
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+export async function getScenePresets(): Promise<ScenePreset[]> {
+  const res = await fetch(`${API_BASE}/api/presets/scenes`);
+  if (!res.ok) {
+    throw new Error("Gagal mengambil daftar preset kanvas");
+  }
+  return res.json();
+}
+
+export async function createScenePreset(
+  name: string,
+  scene: SceneGraph
+): Promise<ScenePreset> {
+  const res = await fetch(`${API_BASE}/api/presets/scenes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, scene }),
+  });
+  if (!res.ok) {
+    let msg = `Gagal membuat preset (HTTP ${res.status})`;
+    try {
+      const err = await res.json();
+      if (typeof err.detail === "string") msg = err.detail;
+      else if (Array.isArray(err.detail)) msg = err.detail.map((d: any) => d.msg).join("; ");
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+export async function updateScenePreset(
+  presetId: string,
+  scene: SceneGraph,
+  name?: string
+): Promise<ScenePreset> {
+  const res = await fetch(`${API_BASE}/api/presets/scenes/${presetId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, scene }),
+  });
+  if (!res.ok) {
+    let msg = `Gagal memperbarui preset (HTTP ${res.status})`;
+    try {
+      const err = await res.json();
+      if (typeof err.detail === "string") msg = err.detail;
+      else if (Array.isArray(err.detail)) msg = err.detail.map((d: any) => d.msg).join("; ");
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+export async function deleteScenePreset(presetId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/presets/scenes/${presetId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error("Gagal menghapus preset");
+  }
+}
+
+export async function updateCandidateRenderMode(
+  candidateId: string,
+  renderMode: "preset" | "freeform"
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/jobs/candidates/${candidateId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ render_mode: renderMode }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update candidate render mode`);
+  }
+}
+
 
 export function getClipVideoUrl(clipId: string): string {
   return `${API_BASE}/api/clips/${clipId}/video`;

@@ -17,6 +17,7 @@ from clipforge.core.logging import logger
 from clipforge.db.connection import get_db
 from clipforge.render.engine import render_single_clip
 from clipforge.render.preview import render_subtitle_preview_frame
+from clipforge.render.scene.schema import SceneGraph
 from clipforge.subtitles import (
     SubtitleWord,
     create_kinetic_chunks,
@@ -88,7 +89,7 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
     """Copy rendered clip files to permanent storage and upsert to finished_clips."""
     query = """
         SELECT c.id, c.candidate_id, c.job_id, c.status, c.video_path, c.thumb_path, c.srt_path,
-               c.width, c.height, c.duration_s, j.title
+               c.width, c.height, c.duration_s, j.title, c.scene_json
         FROM clips c
         LEFT JOIN jobs j ON c.job_id = j.id
         WHERE c.id = ?
@@ -110,6 +111,7 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
         height,
         duration_s,
         j_title,
+        scene_json,
     ) = row
 
     # Permanent storage directory for finished clips
@@ -173,8 +175,8 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
         """
         INSERT INTO finished_clips (
             id, clip_id, job_id, project_title, video_path, thumb_path, srt_path,
-            duration_s, width, height, subtitles_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            duration_s, width, height, subtitles_json, scene_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             project_title = excluded.project_title,
             video_path = excluded.video_path,
@@ -184,6 +186,7 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
             width = excluded.width,
             height = excluded.height,
             subtitles_json = excluded.subtitles_json,
+            scene_json = excluded.scene_json,
             updated_at = excluded.updated_at
         """,
         (
@@ -198,6 +201,7 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
             width or 1080,
             height or 1920,
             words_json,
+            scene_json,
             now_iso,
             now_iso,
         ),
@@ -724,12 +728,12 @@ async def rerender_clip(
 ) -> ClipResponse:
     """Re-render clip with current subs.ass and reframe configuration."""
     async with db.execute(
-        "SELECT job_id, render_params_json FROM clips WHERE id = ?", (clip_id,)
+        "SELECT job_id, render_params_json, scene_json FROM clips WHERE id = ?", (clip_id,)
     ) as cur:
         c_row = await cur.fetchone()
         if not c_row:
             raise HTTPException(status_code=404, detail="Clip not found")
-        job_id, r_params_str = c_row[0], c_row[1]
+        job_id, r_params_str, clip_scene_json = c_row[0], c_row[1], c_row[2]
 
     clip_dir = settings.data_dir / "jobs" / job_id / "clips" / clip_id
     raw_video = clip_dir / "raw.mp4"
@@ -741,6 +745,13 @@ async def rerender_clip(
         if payload and payload.reframe_mode
         else r_params.get("reframe_mode", "blur")
     )
+
+    clip_scene: SceneGraph | None = None
+    if clip_scene_json:
+        try:
+            clip_scene = SceneGraph.model_validate_json(clip_scene_json)
+        except Exception:
+            clip_scene = None
 
     # Check latest subtitle track style or payload
     preset_name = payload.subtitle_style if payload and payload.subtitle_style else None
@@ -780,6 +791,7 @@ async def rerender_clip(
         raw_video=raw_video,
         ass_path=ass_file if has_subtitles else None,
         mode=mode,
+        scene_graph=clip_scene,
     )
 
     status_str = "done" if render_result["success"] else "failed"
@@ -840,3 +852,43 @@ async def download_clip_srt(
         media_type="text/plain",
         filename=f"{clip_id}.srt",
     )
+
+
+@router.get("/{clip_id}/scene")
+async def get_clip_scene(
+    clip_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Retrieve snapshot scene graph for a rendered clip."""
+    async with db.execute("SELECT scene_json FROM clips WHERE id = ?", (clip_id,)) as cur:
+        row = await cur.fetchone()
+        if not row or not row[0]:
+            async with db.execute(
+                "SELECT scene_json FROM finished_clips WHERE clip_id = ?", (clip_id,)
+            ) as f_cur:
+                f_row = await f_cur.fetchone()
+                if f_row and f_row[0]:
+                    row = f_row
+                else:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Scene graph snapshot not found for this clip",
+                    )
+    res_data: dict[str, Any] = json.loads(row[0])
+    return res_data
+
+
+@router.put("/{clip_id}/scene")
+async def update_clip_scene(
+    clip_id: str,
+    scene: SceneGraph,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Update snapshot scene graph for a rendered clip."""
+    scene_json = scene.model_dump_json()
+    await db.execute("UPDATE clips SET scene_json = ? WHERE id = ?", (scene_json, clip_id))
+    await db.execute(
+        "UPDATE finished_clips SET scene_json = ? WHERE clip_id = ?", (scene_json, clip_id)
+    )
+    await db.commit()
+    return scene.model_dump()

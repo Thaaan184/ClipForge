@@ -5,7 +5,6 @@
 """
 
 import pytest
-from pydantic import ValidationError
 
 from clipforge.api.routes.jobs import parse_timestamp_to_seconds
 from clipforge.jobs.models import (

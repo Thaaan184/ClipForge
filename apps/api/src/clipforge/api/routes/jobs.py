@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import shutil
+import subprocess
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -10,13 +12,14 @@ from urllib.parse import urlparse
 
 import aiosqlite
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from clipforge.core.config import settings
 from clipforge.core.errors import HostNotAllowedError, InvalidUrlError, JobNotFoundError
 from clipforge.core.logging import logger
 from clipforge.db.connection import get_db
+from clipforge.ingest.segment import prepare_segment
 from clipforge.jobs.engine import engine
 from clipforge.jobs.events import broadcaster
 from clipforge.jobs.models import (
@@ -26,7 +29,6 @@ from clipforge.jobs.models import (
     JobResponse,
     JobStatus,
     ManualClipCreateRequest,
-    ManualClipItem,
     StageName,
 )
 from clipforge.jobs.pipeline import (
@@ -39,6 +41,9 @@ from clipforge.jobs.pipeline import (
     stage_validate,
 )
 from clipforge.jobs.state_machine import transition_job_status
+from clipforge.render.scene.compiler import FFmpegSceneCompiler
+from clipforge.render.scene.legacy import legacy_reframe_to_scene
+from clipforge.render.scene.schema import SceneGraph
 from clipforge.timeline.models import CandidatesResponse, TimelineResponse
 from clipforge.timeline.service import get_candidates_for_job, get_timeline_for_job
 
@@ -156,6 +161,7 @@ async def _execute_manual_clips_batch(
     - Renders 9:16 vertical video and registers clip in DB.
     """
     from pathlib import Path
+
     from clipforge.api.routes.clips import sync_finished_clip
     from clipforge.asr.whisper import transcribe_clip_media
     from clipforge.db.connection import get_db_connection
@@ -178,7 +184,7 @@ async def _execute_manual_clips_batch(
                 row = await cur.fetchone()
                 if not row:
                     return
-                source_url, genre, language, cur_title, cur_video_id = row[0], row[1], row[2], row[3], row[4]
+                source_url, _genre, language, cur_title, cur_video_id = row[0], row[1], row[2], row[3], row[4]
 
             # Fast metadata probe if title or video_id missing
             video_id = cur_video_id
@@ -471,7 +477,7 @@ async def create_manual_job(
                 start_s = parse_timestamp_to_seconds(item.start_time)
                 end_s = parse_timestamp_to_seconds(item.end_time)
             except ValueError as ve:
-                raise HTTPException(status_code=400, detail=str(ve))
+                raise HTTPException(status_code=400, detail=str(ve)) from ve
             if start_s < 0:
                 raise HTTPException(status_code=400, detail="Start time must be >= 0")
             if end_s <= start_s:
@@ -484,7 +490,7 @@ async def create_manual_job(
             start_s = parse_timestamp_to_seconds(req.start_time)
             end_s = parse_timestamp_to_seconds(req.end_time)
         except ValueError as ve:
-            raise HTTPException(status_code=400, detail=str(ve))
+            raise HTTPException(status_code=400, detail=str(ve)) from ve
         if start_s < 0:
             raise HTTPException(status_code=400, detail="Start time must be >= 0")
         if end_s <= start_s:
@@ -617,7 +623,7 @@ async def add_manual_clips_to_job(
             start_s = parse_timestamp_to_seconds(item.start_time)
             end_s = parse_timestamp_to_seconds(item.end_time)
         except ValueError as ve:
-            raise HTTPException(status_code=400, detail=str(ve))
+            raise HTTPException(status_code=400, detail=str(ve)) from ve
         if start_s < 0:
             raise HTTPException(status_code=400, detail="Start time must be >= 0")
         if end_s <= start_s:
@@ -925,6 +931,7 @@ class CandidateUpdatePayload(BaseModel):
     status: str | None = None  # kept | rejected | proposed
     user_start_s: float | None = None
     user_end_s: float | None = None
+    render_mode: str | None = None  # preset | freeform
 
 
 @router.patch("/candidates/{candidate_id}")
@@ -933,7 +940,7 @@ async def update_candidate_review(
     payload: CandidateUpdatePayload,
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict[str, Any]:
-    """Update review status or manual timing boundaries for a candidate."""
+    """Update review status, manual timing boundaries, or render mode for a candidate."""
     async with db.execute(
         "SELECT id, start_s, end_s FROM candidates WHERE id = ?", (candidate_id,)
     ) as cur:
@@ -956,12 +963,276 @@ async def update_candidate_review(
         updates.append("user_end_s = ?")
         params.append(payload.user_end_s)
 
+    if payload.render_mode is not None:
+        if payload.render_mode not in ("preset", "freeform"):
+            raise HTTPException(
+                status_code=400,
+                detail="render_mode must be either 'preset' or 'freeform'",
+            )
+        updates.append("render_mode = ?")
+        params.append(payload.render_mode)
+
     if updates:
         params.append(candidate_id)
         await db.execute(f"UPDATE candidates SET {', '.join(updates)} WHERE id = ?", tuple(params))
         await db.commit()
 
     return {"status": "updated", "candidate_id": candidate_id}
+
+
+class SegmentCreateRequest(BaseModel):
+    start_s: float
+    end_s: float
+
+
+@router.post("/{job_id}/segments", status_code=status.HTTP_202_ACCEPTED)
+async def create_job_segment(
+    job_id: str,
+    req: SegmentCreateRequest,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Prepare a bounded clip segment and 720p proxy preview video."""
+    async with db.execute(
+        "SELECT source_url FROM jobs WHERE id = ?", (job_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Job not found")
+        source_url = row[0]
+
+    return await prepare_segment(
+        source_url=source_url,
+        start_s=req.start_s,
+        end_s=req.end_s,
+        job_id=job_id,
+        cookies_path=settings.cookies_file,
+    )
+
+
+@router.get("/candidates/{candidate_id}/scene")
+async def get_candidate_scene(
+    candidate_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Retrieve scene graph for a candidate, or auto-generate initial scene from preset."""
+    async with db.execute(
+        """SELECT c.id, c.job_id, c.start_s, c.end_s, c.user_start_s, c.user_end_s,
+                  j.params_json, sg.scene_json
+           FROM candidates c
+           JOIN jobs j ON c.job_id = j.id
+           LEFT JOIN scene_graphs sg ON c.id = sg.candidate_id
+           WHERE c.id = ?""",
+        (candidate_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+    (
+        c_id,
+        job_id,
+        start_s,
+        end_s,
+        u_start,
+        u_end,
+        params_json_str,
+        scene_json,
+    ) = row
+
+    if scene_json:
+        return SceneGraph.model_validate_json(scene_json).model_dump()
+
+    # Parse job parameters
+    params: dict[str, Any] = {}
+    if params_json_str:
+        try:
+            params = json.loads(params_json_str)
+        except Exception:
+            params = {}
+
+    reframe_mode = params.get("reframe_mode", "blur")
+    sub_style = params.get("subtitle_style", "classic_white")
+    sub_pos = params.get("subtitle_position", "bottom")
+
+    actual_start = u_start if u_start is not None else start_s
+    actual_end = u_end if u_end is not None else end_s
+    src_w = 1920
+    src_h = 1080
+    fps = 30.0
+
+    scene = legacy_reframe_to_scene(
+        mode=reframe_mode or "blur",
+        source_dims=(src_w, src_h),
+        subtitle_cfg={
+            "preset": sub_style or "classic_white",
+            "position": sub_pos or "bottom",
+        },
+        start_s=actual_start,
+        end_s=actual_end,
+        fps=fps,
+    )
+    return scene.model_dump()
+
+
+@router.put("/candidates/{candidate_id}/scene")
+async def save_candidate_scene(
+    candidate_id: str,
+    scene: SceneGraph,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Save or update candidate scene graph and set render_mode to freeform."""
+    async with db.execute(
+        "SELECT job_id FROM candidates WHERE id = ?", (candidate_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        job_id = row[0]
+
+    now_iso = datetime.now(UTC).isoformat()
+    scene_json = scene.model_dump_json()
+
+    await db.execute(
+        """INSERT INTO scene_graphs (candidate_id, job_id, scene_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(candidate_id) DO UPDATE SET
+               scene_json = excluded.scene_json,
+               updated_at = excluded.updated_at""",
+        (candidate_id, job_id, scene_json, now_iso, now_iso),
+    )
+    await db.execute(
+        "UPDATE candidates SET render_mode = 'freeform' WHERE id = ?",
+        (candidate_id,),
+    )
+    await db.commit()
+
+    return scene.model_dump()
+
+
+class PreviewFrameRequest(BaseModel):
+    t: float = 0.0
+
+
+@router.post("/candidates/{candidate_id}/scene/preview-frame")
+async def preview_candidate_scene_frame(
+    candidate_id: str,
+    req: PreviewFrameRequest | None = None,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> FileResponse:
+    """Render a single 1080x1920 PNG frame from scene graph for visual verification and parity tests."""
+    async with db.execute(
+        """SELECT c.id, c.job_id, c.start_s, c.end_s, c.user_start_s, c.user_end_s,
+                  j.source_url, j.params_json, sg.scene_json
+           FROM candidates c
+           JOIN jobs j ON c.job_id = j.id
+           LEFT JOIN scene_graphs sg ON c.id = sg.candidate_id
+           WHERE c.id = ?""",
+        (candidate_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+    (
+        c_id,
+        job_id,
+        start_s,
+        end_s,
+        u_start,
+        u_end,
+        source_url,
+        params_json_str,
+        scene_json,
+    ) = row
+
+    actual_start = u_start if u_start is not None else start_s
+    actual_end = u_end if u_end is not None else end_s
+    time_offset = req.t if req else 0.0
+
+    if scene_json:
+        scene = SceneGraph.model_validate_json(scene_json)
+    else:
+        params: dict[str, Any] = {}
+        if params_json_str:
+            try:
+                params = json.loads(params_json_str)
+            except Exception:
+                params = {}
+        scene = legacy_reframe_to_scene(
+            mode=params.get("reframe_mode", "blur"),
+            source_dims=(1920, 1080),
+            subtitle_cfg={
+                "preset": params.get("subtitle_style", "classic_white"),
+                "position": params.get("subtitle_position", "bottom"),
+            },
+            start_s=actual_start,
+            end_s=actual_end,
+        )
+
+    # Prepare or find segment video
+    seg_info = await prepare_segment(
+        source_url=source_url,
+        start_s=actual_start,
+        end_s=actual_end,
+        job_id=job_id,
+        cookies_path=settings.cookies_file,
+    )
+    seg_dir = settings.data_dir / "segments" / seg_info["segment_id"]
+    source_media = seg_dir / "full.mp4"
+    if not source_media.exists():
+        source_media = seg_dir / "proxy.mp4"
+    if not source_media.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Segment video source not ready for preview frame",
+        )
+
+    preview_dir = settings.data_dir / "preview_frames" / candidate_id
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    out_png = preview_dir / f"frame_{int(time_offset * 1000)}.png"
+
+    compiler = FFmpegSceneCompiler()
+    compiled = compiler.compile(
+        scene=scene,
+        source_video=source_media,
+        work_dir=preview_dir / "_tmp",
+        duration_s=max(1.0, actual_end - actual_start),
+        fps=float(scene.canvas.fps),
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        f"{time_offset:.3f}",
+        *compiled.input_args,
+        "-filter_complex",
+        compiled.filter_complex,
+        *compiled.map_args,
+        "-vframes",
+        "1",
+        "-loglevel",
+        "error",
+        str(out_png),
+    ]
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True)
+        if proc.returncode != 0:
+            err = proc.stderr.decode("utf-8", errors="replace")
+            raise HTTPException(
+                status_code=500, detail=f"Preview frame render failed: {err[:300]}"
+            )
+    finally:
+        for a in compiled.temp_assets:
+            try:
+                if a.exists():
+                    a.unlink()
+            except Exception:
+                pass
+        shutil.rmtree(preview_dir / "_tmp", ignore_errors=True)
+
+    return FileResponse(path=str(out_png), media_type="image/png")
 
 
 class TriggerRenderRequest(BaseModel):

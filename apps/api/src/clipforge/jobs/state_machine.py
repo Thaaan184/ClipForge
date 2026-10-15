@@ -10,7 +10,12 @@ from clipforge.jobs.events import broadcaster
 from clipforge.jobs.models import JobStatus
 
 VALID_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
-    JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.CANCELLED},
+    JobStatus.QUEUED: {
+        JobStatus.RUNNING,
+        JobStatus.AWAITING_REVIEW,
+        JobStatus.RENDERING,
+        JobStatus.CANCELLED,
+    },
     JobStatus.RUNNING: {
         JobStatus.RUNNING,
         JobStatus.AWAITING_REVIEW,
@@ -28,6 +33,7 @@ VALID_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.RENDERING: {
         JobStatus.RENDERING,
         JobStatus.RUNNING,
+        JobStatus.AWAITING_REVIEW,
         JobStatus.DONE,
         JobStatus.FAILED,
         JobStatus.CANCELLED,
@@ -35,12 +41,18 @@ VALID_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.DONE: {
         JobStatus.RENDERING,
         JobStatus.RUNNING,
+        JobStatus.AWAITING_REVIEW,
     },
     JobStatus.FAILED: {
         JobStatus.RENDERING,
         JobStatus.RUNNING,
+        JobStatus.AWAITING_REVIEW,
     },
-    JobStatus.CANCELLED: set(),
+    JobStatus.CANCELLED: {
+        JobStatus.RENDERING,
+        JobStatus.RUNNING,
+        JobStatus.AWAITING_REVIEW,
+    },
 }
 
 
