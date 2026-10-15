@@ -202,8 +202,11 @@ export const TransformGizmo: React.FC<TransformGizmoProps> = ({
         transform: `translate(-50%, -50%) rotate(${t.rotation}deg)`,
       }}
     >
-      {/* Box Border */}
-      <div className="absolute inset-0 border border-[#00FFCC] pointer-events-none" />
+      {/* Box Border & Drag Move Surface */}
+      <div
+        className="absolute inset-0 border border-[#00FFCC] pointer-events-auto cursor-move bg-cyan-400/5 hover:bg-cyan-400/10 transition-colors"
+        onPointerDown={(e) => startDrag("move", e)}
+      />
 
       {/* Rotation handle with stalk */}
       <div

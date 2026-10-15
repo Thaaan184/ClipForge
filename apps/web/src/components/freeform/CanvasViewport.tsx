@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSceneStore } from "../../lib/scene/store";
 import { hitTestLayer } from "../../lib/scene/geometry";
+import { LayerConfig } from "../../types";
 import { TransformGizmo } from "./TransformGizmo";
 
 interface CanvasViewportProps {
@@ -203,8 +204,15 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     return () => cancelAnimationFrame(animId);
   }, [scene, videoRef, sourceWidth, sourceHeight]);
 
-  // Click on canvas to select layer
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const [dragState, setDragState] = useState<{
+    layerId: string;
+    startMouseX: number;
+    startMouseY: number;
+    initialTransform: LayerConfig["transform"];
+  } | null>(null);
+
+  // Pointer down on canvas to select & hold-and-drag layer
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!scene) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -218,11 +226,86 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       if (!lyr.visible || lyr.locked) continue;
       if (hitTestLayer(clickX, clickY, lyr)) {
         setSelectedLayerId(lyr.id);
+        setDragState({
+          layerId: lyr.id,
+          startMouseX: e.clientX,
+          startMouseY: e.clientY,
+          initialTransform: { ...lyr.transform },
+        });
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {}
         return;
       }
     }
     // Deselect if click empty canvas
     setSelectedLayerId(null);
+    setDragState(null);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!dragState) {
+      // Hover cursor feedback
+      if (!scene || !canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const hoverX = ((e.clientX - rect.left) / rect.width) * 1080;
+      const hoverY = ((e.clientY - rect.top) / rect.height) * 1920;
+      const hasHit = scene.layers.some(
+        (l) => l.visible && !l.locked && hitTestLayer(hoverX, hoverY, l)
+      );
+      canvasRef.current.style.cursor = hasHit ? "move" : "default";
+      return;
+    }
+
+    const dx = (e.clientX - dragState.startMouseX) / viewportScale;
+    const dy = (e.clientY - dragState.startMouseY) / viewportScale;
+
+    let newCx = Math.round(dragState.initialTransform.cx + dx);
+    let newCy = Math.round(dragState.initialTransform.cy + dy);
+
+    const halfW = dragState.initialTransform.w / 2;
+    const halfH = dragState.initialTransform.h / 2;
+    const SNAP_THRESHOLD = 12;
+
+    let snapX: number | null = null;
+    let snapY: number | null = null;
+
+    // Snapping X: Center (540), Left (0), Right (1080)
+    if (Math.abs(newCx - 540) < SNAP_THRESHOLD) {
+      newCx = 540;
+      snapX = 540;
+    } else if (Math.abs(newCx - halfW) < SNAP_THRESHOLD) {
+      newCx = Math.round(halfW);
+      snapX = 0;
+    } else if (Math.abs(newCx + halfW - 1080) < SNAP_THRESHOLD) {
+      newCx = Math.round(1080 - halfW);
+      snapX = 1080;
+    }
+
+    // Snapping Y: Center (960), Top (0), Bottom (1920)
+    if (Math.abs(newCy - 960) < SNAP_THRESHOLD) {
+      newCy = 960;
+      snapY = 960;
+    } else if (Math.abs(newCy - halfH) < SNAP_THRESHOLD) {
+      newCy = Math.round(halfH);
+      snapY = 0;
+    } else if (Math.abs(newCy + halfH - 1920) < SNAP_THRESHOLD) {
+      newCy = Math.round(1920 - halfH);
+      snapY = 1920;
+    }
+
+    setSnapGuides({ x: snapX, y: snapY });
+    updateLayerTransform(dragState.layerId, { cx: newCx, cy: newCy });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (canvasRef.current) {
+      try {
+        canvasRef.current.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+    setDragState(null);
+    setSnapGuides({ x: null, y: null });
   };
 
   const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -262,7 +345,9 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
           ref={canvasRef}
           width={1080}
           height={1920}
-          onClick={handleCanvasClick}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
           onDoubleClick={handleDoubleClick}
           className="w-full h-full cursor-default"
         />
