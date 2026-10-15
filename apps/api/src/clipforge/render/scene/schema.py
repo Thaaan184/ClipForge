@@ -119,6 +119,13 @@ class SubtitlesConfig(StrictBase):
     enabled: bool = True
     preset: str = "classic_white"
     position: str = "bottom"
+    position_y: float | None = None
+    font_size: int | None = None
+    color: str | None = None
+    highlight_color: str | None = None
+    outline_color: str | None = None
+    outline_width: int | None = None
+    max_words_per_line: int | None = None
 
 
 class SceneGraph(StrictBase):

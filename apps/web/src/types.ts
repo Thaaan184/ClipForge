@@ -249,6 +249,13 @@ export interface SubtitlesConfig {
   enabled: boolean;
   preset: string;
   position: string;
+  position_y?: number | null;
+  font_size?: number | null;
+  color?: string | null;
+  highlight_color?: string | null;
+  outline_color?: string | null;
+  outline_width?: number | null;
+  max_words_per_line?: number | null;
 }
 
 export interface SceneGraph {
