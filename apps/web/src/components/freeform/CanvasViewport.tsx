@@ -92,15 +92,23 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     setPan({ x: 0, y: 0 });
   };
 
-  // Mouse wheel zoom
+  // Mouse wheel zoom directly into cursor position
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.2 : -0.2;
-    setUserZoom((prev) => {
-      const next = Math.min(4, Math.max(0.25, Math.round((prev + delta) * 100) / 100));
-      if (next <= 1) setPan({ x: 0, y: 0 });
-      return next;
-    });
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const mX = e.clientX - rect.left;
+    const mY = e.clientY - rect.top;
+
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const nextZoom = Math.min(5, Math.max(0.25, Math.round(userZoom * factor * 100) / 100));
+    if (nextZoom === userZoom) return;
+
+    const newPanX = mX - (mX - pan.x) * (nextZoom / userZoom);
+    const newPanY = mY - (mY - pan.y) * (nextZoom / userZoom);
+
+    setUserZoom(nextZoom);
+    setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
   };
 
   // Main Canvas2D render loop (~60 FPS)

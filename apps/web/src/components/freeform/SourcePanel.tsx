@@ -58,7 +58,9 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
-  const [frameDims, setFrameDims] = useState<{ width: number; height: number }>({
+
+  // Fixed unscaled aspect-accurate frame dimensions (Fit size)
+  const [baseDims, setBaseDims] = useState<{ width: number; height: number }>({
     width: 0,
     height: 0,
   });
@@ -70,8 +72,8 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
   const [isSpaceDown, setIsSpaceDown] = useState(false);
   const panStartRef = useRef<{ mouseX: number; mouseY: number; panX: number; panY: number } | null>(null);
 
-  // Calculate exact inner video display dimensions to prevent letterbox offsets
-  const updateFrameDims = useCallback(() => {
+  // Calculate unscaled base dimensions (100% Fit) keeping 16:9 aspect ratio locked
+  const updateBaseDims = useCallback(() => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const pad = 16;
@@ -88,46 +90,49 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     }
 
     const cAspect = cW / cH;
-    let vW = cW;
-    let vH = cH;
+    let vW: number;
+    let vH: number;
 
     if (cAspect > vAspect) {
-      vH = cH;
+      // Container is wider -> fit height
+      vH = Math.round(cH);
       vW = Math.round(cH * vAspect);
     } else {
-      vW = cW;
+      // Container is taller -> fit width
+      vW = Math.round(cW);
       vH = Math.round(cW / vAspect);
     }
 
-    setFrameDims({ width: vW, height: vH });
+    setBaseDims({ width: vW, height: vH });
   }, [sourceWidth, sourceHeight, videoRef]);
+
+  // Center video when baseDims changes or container initializes
+  useEffect(() => {
+    if (!containerRef.current || baseDims.width <= 0 || baseDims.height <= 0) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    setPan({
+      x: Math.round((rect.width - baseDims.width) / 2),
+      y: Math.round((rect.height - baseDims.height) / 2),
+    });
+  }, [baseDims.width, baseDims.height]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    updateFrameDims();
+    updateBaseDims();
 
     const observer = new ResizeObserver(() => {
-      updateFrameDims();
+      updateBaseDims();
     });
     observer.observe(container);
 
     return () => {
       observer.disconnect();
     };
-  }, [updateFrameDims]);
+  }, [updateBaseDims]);
 
-  // Conversion: display canvas coordinates <-> original source pixels
-  const getScale = useCallback(() => {
-    if (!canvasRef.current) return { sx: 1, sy: 1, width: 1, height: 1 };
-    const rect = canvasRef.current.getBoundingClientRect();
-    const sx = sourceWidth / Math.max(1, rect.width);
-    const sy = sourceHeight / Math.max(1, rect.height);
-    return { sx, sy, width: rect.width, height: rect.height };
-  }, [sourceWidth, sourceHeight]);
-
-  // Spacebar listener for temporary pan mode
+  // Spacebar listener for quick pan mode
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space" && (e.target as HTMLElement)?.tagName !== "INPUT") {
@@ -147,34 +152,78 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     };
   }, []);
 
-  // Zoom helpers
-  const handleZoomIn = () => {
-    setZoom((prev) => Math.min(4, Math.round((prev + 0.25) * 100) / 100));
-  };
-
-  const handleZoomOut = () => {
-    setZoom((prev) => {
-      const next = Math.max(0.5, Math.round((prev - 0.25) * 100) / 100);
-      if (next <= 1) setPan({ x: 0, y: 0 });
-      return next;
-    });
-  };
-
-  const handleResetZoom = () => {
+  // Reset zoom & center
+  const handleResetZoom = useCallback(() => {
     setZoom(1);
-    setPan({ x: 0, y: 0 });
+    if (containerRef.current && baseDims.width > 0 && baseDims.height > 0) {
+      const rect = containerRef.current.getBoundingClientRect();
+      setPan({
+        x: Math.round((rect.width - baseDims.width) / 2),
+        y: Math.round((rect.height - baseDims.height) / 2),
+      });
+    } else {
+      setPan({ x: 0, y: 0 });
+    }
+  }, [baseDims]);
+
+  // Zoom In / Out from center of container
+  const handleZoomStep = (direction: 1 | -1) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+
+    const nextZoom = Math.min(5, Math.max(0.5, Math.round((zoom + direction * 0.25) * 100) / 100));
+    if (nextZoom === zoom) return;
+
+    const newPanX = centerX - (centerX - pan.x) * (nextZoom / zoom);
+    const newPanY = centerY - (centerY - pan.y) * (nextZoom / zoom);
+
+    setZoom(nextZoom);
+    setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
   };
 
-  // Mouse wheel zoom
+  // Zoom directly into mouse cursor on mouse wheel
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.2 : -0.2;
-    setZoom((prev) => {
-      const next = Math.min(4, Math.max(0.5, Math.round((prev + delta) * 100) / 100));
-      if (next <= 1) setPan({ x: 0, y: 0 });
-      return next;
-    });
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const mX = e.clientX - rect.left;
+    const mY = e.clientY - rect.top;
+
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const nextZoom = Math.min(5, Math.max(0.5, Math.round(zoom * factor * 100) / 100));
+    if (nextZoom === zoom) return;
+
+    const newPanX = mX - (mX - pan.x) * (nextZoom / zoom);
+    const newPanY = mY - (mY - pan.y) * (nextZoom / zoom);
+
+    setZoom(nextZoom);
+    setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
   };
+
+  // Convert client coordinates (screen clientX/clientY) -> Source pixel space (0..sourceWidth, 0..sourceHeight)
+  const clientToSource = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!containerRef.current || baseDims.width <= 0 || baseDims.height <= 0) {
+        return { x: 0, y: 0 };
+      }
+      const cRect = containerRef.current.getBoundingClientRect();
+      const mX = clientX - cRect.left;
+      const mY = clientY - cRect.top;
+
+      // Un-pan and un-zoom to base canvas space (0..baseDims)
+      const canvasX = (mX - pan.x) / zoom;
+      const canvasY = (mY - pan.y) / zoom;
+
+      // Scale to original source dimensions (0..sourceWidth, 0..sourceHeight)
+      const srcX = Math.max(0, Math.min(sourceWidth, (canvasX / baseDims.width) * sourceWidth));
+      const srcY = Math.max(0, Math.min(sourceHeight, (canvasY / baseDims.height) * sourceHeight));
+
+      return { x: srcX, y: srcY };
+    },
+    [baseDims, pan, zoom, sourceWidth, sourceHeight]
+  );
 
   // Video playback constraints
   useEffect(() => {
@@ -206,20 +255,20 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     }
   };
 
-  // Redraw overlay canvas
+  // Redraw overlay canvas (rendered at baseDims, CSS scales it smoothly)
   const drawOverlay = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || baseDims.width <= 0 || baseDims.height <= 0) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * window.devicePixelRatio;
-    canvas.height = rect.height * window.devicePixelRatio;
+    canvas.width = baseDims.width * window.devicePixelRatio;
+    canvas.height = baseDims.height * window.devicePixelRatio;
     ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
 
-    ctx.clearRect(0, 0, rect.width, rect.height);
-    const { sx, sy } = getScale();
+    ctx.clearRect(0, 0, baseDims.width, baseDims.height);
+    const sx = sourceWidth / baseDims.width;
+    const sy = sourceHeight / baseDims.height;
 
     // 1. Draw existing layers outline
     if (scene) {
@@ -298,7 +347,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
         ctx.stroke();
       }
     }
-  }, [scene, selectedLayerId, draftShape, getScale, frameDims, zoom]);
+  }, [scene, selectedLayerId, draftShape, baseDims, sourceWidth, sourceHeight]);
 
   useEffect(() => {
     drawOverlay();
@@ -309,7 +358,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Pan mode: Space held OR Hand tool OR Middle mouse button
+    // Pan mode: Space held OR Hand tool active OR Middle mouse button
     if (isSpaceDown || activeTool === "pan" || e.button === 1) {
       setIsPanning(true);
       panStartRef.current = {
@@ -324,18 +373,16 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
       return;
     }
 
+    const { x: srcX, y: srcY } = clientToSource(e.clientX, e.clientY);
+
     if (activeTool === "select") {
       if (!scene) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (sourceWidth / Math.max(1, rect.width));
-      const y = (e.clientY - rect.top) * (sourceHeight / Math.max(1, rect.height));
-
       // Hit test existing layers in reverse order
       const reversed = [...scene.layers].reverse();
       for (const lyr of reversed) {
         if (!lyr.visible) continue;
         const b = lyr.shape.bbox;
-        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+        if (srcX >= b.x && srcX <= b.x + b.w && srcY >= b.y && srcY <= b.y + b.h) {
           setSelectedLayerId(lyr.id);
           return;
         }
@@ -346,14 +393,6 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {}
-
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const { sx, sy } = getScale();
-
-    const srcX = Math.max(0, Math.min(sourceWidth, x * sx));
-    const srcY = Math.max(0, Math.min(sourceHeight, y * sy));
 
     if (activeTool === "rect" || activeTool === "ellipse") {
       setIsDrawing(true);
@@ -374,16 +413,15 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
           isComplete: false,
         });
       } else {
-        // Add point to existing lasso
         const pts = [...draftShape.points, [srcX, srcY] as [number, number]];
         const minX = Math.min(...pts.map((p) => p[0]));
         const maxX = Math.max(...pts.map((p) => p[0]));
         const minY = Math.min(...pts.map((p) => p[1]));
         const maxY = Math.max(...pts.map((p) => p[1]));
 
-        // Check if close to start point to auto-close
         const startPt = pts[0];
         const distToStart = Math.hypot(srcX - startPt[0], srcY - startPt[1]);
+        const sx = sourceWidth / baseDims.width;
         if (pts.length >= 3 && distToStart < 15 * sx) {
           const simplified = simplifyLasso(pts, 2.0);
           setDraftShape({
@@ -416,15 +454,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     }
 
     if (!isDrawing || !dragStart || !draftShape) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const { sx, sy } = getScale();
-
-    const curX = Math.max(0, Math.min(sourceWidth, x * sx));
-    const curY = Math.max(0, Math.min(sourceHeight, y * sy));
+    const { x: curX, y: curY } = clientToSource(e.clientX, e.clientY);
 
     if (activeTool === "rect" || activeTool === "ellipse") {
       const minX = Math.min(dragStart.x, curX);
@@ -585,11 +615,12 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
         className="relative flex-1 bg-black flex items-center justify-center p-2 overflow-hidden"
       >
         <div
-          className="relative shadow-lg transition-transform duration-75"
+          className="relative shadow-lg"
           style={{
-            width: frameDims.width > 0 ? `${frameDims.width * zoom}px` : "100%",
-            height: frameDims.height > 0 ? `${frameDims.height * zoom}px` : "100%",
-            transform: `translate(${pan.x}px, ${pan.y}px)`,
+            width: baseDims.width > 0 ? `${baseDims.width}px` : "100%",
+            height: baseDims.height > 0 ? `${baseDims.height}px` : "100%",
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: "0 0",
           }}
         >
           <video
@@ -598,8 +629,8 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
             playsInline
             muted
             loop
-            onLoadedMetadata={updateFrameDims}
-            className="w-full h-full object-fill pointer-events-none block"
+            onLoadedMetadata={updateBaseDims}
+            className="w-full h-full object-contain pointer-events-none block"
           />
 
           <canvas
@@ -611,22 +642,22 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
           />
 
           {/* Draft Confirmation Buttons Near Shape */}
-          {draftShape && draftShape.isComplete && (
+          {draftShape && draftShape.isComplete && baseDims.width > 0 && (
             <div
               className="absolute z-20 flex items-center gap-1 bg-[#141414] border border-[#FF6A00] rounded px-2 py-1 shadow-lg"
               style={{
                 left: `${Math.max(
                   10,
                   Math.min(
-                    (frameDims.width * zoom || 400) - 150,
-                    (draftShape.bbox.x + draftShape.bbox.w / 2) / getScale().sx - 60
+                    baseDims.width - 150,
+                    (draftShape.bbox.x + draftShape.bbox.w / 2) / (sourceWidth / baseDims.width) - 60
                   )
                 )}px`,
                 top: `${Math.max(
                   10,
                   Math.min(
-                    (frameDims.height * zoom || 300) - 40,
-                    (draftShape.bbox.y + draftShape.bbox.h) / getScale().sy + 10
+                    baseDims.height - 40,
+                    (draftShape.bbox.y + draftShape.bbox.h) / (sourceHeight / baseDims.height) + 10
                   )
                 )}px`,
               }}
@@ -650,7 +681,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
         {/* Floating Zoom Bar for Source Panel */}
         <div className="absolute bottom-2 right-2 z-30 flex items-center gap-1 bg-[#141414]/90 border border-[#333333] backdrop-blur-sm rounded px-1.5 py-1 text-xs font-mono shadow-xl">
           <button
-            onClick={handleZoomOut}
+            onClick={() => handleZoomStep(-1)}
             disabled={zoom <= 0.5}
             title="Zoom Out (-)"
             className="p-1 hover:text-[#00FFCC] text-[#AAAAAA] disabled:opacity-30 rounded hover:bg-[#222222]"
@@ -665,8 +696,8 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
             {Math.round(zoom * 100)}%
           </button>
           <button
-            onClick={handleZoomIn}
-            disabled={zoom >= 4.0}
+            onClick={() => handleZoomStep(1)}
+            disabled={zoom >= 5.0}
             title="Zoom In (+)"
             className="p-1 hover:text-[#00FFCC] text-[#AAAAAA] disabled:opacity-30 rounded hover:bg-[#222222]"
           >
@@ -685,7 +716,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
 
       {/* Bottom Hint */}
       <div className="px-3 py-1 bg-[#0A0A0A] border-t border-[#2A2A2A] text-[10px] text-[#666666] flex justify-between">
-        <span>Tahan Spasi / Hand Tool untuk geser | Scroll mouse untuk Zoom</span>
+        <span>Tahan Spasi / Hand Tool untuk geser | Scroll mouse zoom ke kursor</span>
         <span>Enter = Simpan Cut | Esc = Batal</span>
       </div>
     </div>
