@@ -37,6 +37,9 @@ import {
   Job,
   JobParams,
   ManualClipSegment,
+  REFRAME_OPTIONS,
+  SUBTITLE_POSITION_OPTIONS,
+  SUBTITLE_PRESET_OPTIONS,
   SubtitleTrack,
   TimelineData,
 } from "./types";
@@ -1074,13 +1077,11 @@ export default function App(): JSX.Element {
                             disabled={isRendering || currentJob.status === "rendering"}
                             className="bg-transparent text-copy text-xs font-semibold focus:outline-none cursor-pointer"
                           >
-                            <option value="classic_white">Classic White</option>
-                            <option value="hormozi_bold">Hormozi Bold (Kuning)</option>
-                            <option value="fire_orange">Fire Orange</option>
-                            <option value="mrbeast_box">MrBeast Box</option>
-                            <option value="neon_glow">Neon Glow</option>
-                            <option value="minimal_clean">Minimal Clean</option>
-                            <option value="none">Tanpa Subtitle (None)</option>
+                            {SUBTITLE_PRESET_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
                           </select>
                         </div>
 
@@ -1093,9 +1094,11 @@ export default function App(): JSX.Element {
                             disabled={isRendering || currentJob.status === "rendering"}
                             className="bg-transparent text-copy text-xs font-semibold focus:outline-none cursor-pointer"
                           >
-                            <option value="blur">Blur Pillarbox</option>
-                            <option value="center">Center Crop</option>
-                            <option value="stacked">Stacked Cam/Game</option>
+                            {REFRAME_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
                           </select>
                         </div>
 
@@ -1108,8 +1111,11 @@ export default function App(): JSX.Element {
                             disabled={isRendering || currentJob.status === "rendering" || renderSubtitleStyle === "none"}
                             className="bg-transparent text-copy text-xs font-semibold focus:outline-none cursor-pointer"
                           >
-                            <option value="bottom">Bawah (Standar Y=1680)</option>
-                            <option value="top">Atas (YT Shorts Safe Y=420)</option>
+                            {SUBTITLE_POSITION_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
                           </select>
                         </div>
 

@@ -4,6 +4,27 @@ export interface ManualClipSegment {
   title?: string;
 }
 
+export const REFRAME_OPTIONS = [
+  { value: "blur", label: "Blur Pillarbox (Rec)" },
+  { value: "center", label: "Center Crop" },
+  { value: "stacked", label: "Stacked Cam/Game" },
+] as const;
+
+export const SUBTITLE_PRESET_OPTIONS = [
+  { value: "classic_white", label: "Classic White (Putih)" },
+  { value: "fire_orange", label: "Fire Orange (Oranye)" },
+  { value: "hormozi_bold", label: "Hormozi Bold (Kuning/Hijau)" },
+  { value: "mrbeast_box", label: "MrBeast Box (Bold Gold)" },
+  { value: "neon_glow", label: "Neon Glow (Cyan/Magenta)" },
+  { value: "minimal_clean", label: "Minimal Clean (Putih Minimalis)" },
+  { value: "none", label: "Tanpa Subtitle (No Subtitle)" },
+] as const;
+
+export const SUBTITLE_POSITION_OPTIONS = [
+  { value: "bottom", label: "Bawah (Standar Y=1680)" },
+  { value: "top", label: "Atas (YT Shorts Safe Y=420)" },
+] as const;
+
 export interface JobParams {
   clip_count?: number;
   reframe_mode?: "blur" | "center" | "stacked";

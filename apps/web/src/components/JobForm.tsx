@@ -1,5 +1,11 @@
 import React, { useState } from "react";
-import { JobParams, ManualClipSegment } from "../types";
+import {
+  JobParams,
+  ManualClipSegment,
+  REFRAME_OPTIONS,
+  SUBTITLE_POSITION_OPTIONS,
+  SUBTITLE_PRESET_OPTIONS,
+} from "../types";
 import { ArrowRight, Film, Plus, Scissors, Sparkles, Trash2, Zap } from "lucide-react";
 
 interface JobFormProps {
@@ -350,9 +356,11 @@ export const JobForm: React.FC<JobFormProps> = ({
                 disabled={loading}
                 className="w-full bg-bg border border-line py-1.5 px-2 text-copy focus:border-action focus:outline-none"
               >
-                <option value="blur">Blur Pillarbox (Rec)</option>
-                <option value="center">Center Crop</option>
-                <option value="stacked">Stacked Cam/Game</option>
+                {REFRAME_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -367,13 +375,11 @@ export const JobForm: React.FC<JobFormProps> = ({
                 disabled={loading}
                 className="w-full bg-bg border border-line py-1.5 px-2 text-copy focus:border-action focus:outline-none"
               >
-                <option value="classic_white">Classic White (Putih)</option>
-                <option value="fire_orange">Fire Orange (Oranye)</option>
-                <option value="hormozi_bold">Hormozi Bold (Kuning/Hijau)</option>
-                <option value="mrbeast_box">MrBeast Box (Bold Gold)</option>
-                <option value="neon_glow">Neon Glow (Cyan/Magenta)</option>
-                <option value="minimal_clean">Minimal Clean (Putih Minimalis)</option>
-                <option value="none">Tanpa Subtitle (No Subtitle)</option>
+                {SUBTITLE_PRESET_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -388,8 +394,11 @@ export const JobForm: React.FC<JobFormProps> = ({
                 disabled={loading || subtitleStyle === "none"}
                 className="w-full bg-bg border border-line py-1.5 px-2 text-copy focus:border-action focus:outline-none"
               >
-                <option value="bottom">Bawah (Standar Y=1680)</option>
-                <option value="top">Atas (YT Shorts Safe Y=420)</option>
+                {SUBTITLE_POSITION_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -504,13 +513,11 @@ export const JobForm: React.FC<JobFormProps> = ({
                   disabled={loading}
                   className="w-full bg-bg border border-line py-1.5 px-2 text-copy focus:border-action focus:outline-none"
                 >
-                  <option value="none">Tanpa Subtitle (No Subtitle - Ekstra Cepat)</option>
-                  <option value="classic_white">Classic White (Putih)</option>
-                  <option value="fire_orange">Fire Orange (Oranye)</option>
-                  <option value="hormozi_bold">Hormozi Bold (Kuning/Hijau)</option>
-                  <option value="mrbeast_box">MrBeast Box (Bold Gold)</option>
-                  <option value="neon_glow">Neon Glow (Cyan/Magenta)</option>
-                  <option value="minimal_clean">Minimal Clean (Putih Minimalis)</option>
+                  {SUBTITLE_PRESET_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -524,8 +531,11 @@ export const JobForm: React.FC<JobFormProps> = ({
                   disabled={loading || subtitleStyle === "none"}
                   className="w-full bg-bg border border-line py-1.5 px-2 text-copy focus:border-action focus:outline-none"
                 >
-                  <option value="bottom">Bawah (Y=1680 Standar)</option>
-                  <option value="top">Atas (YT Shorts Safe Y=420)</option>
+                  {SUBTITLE_POSITION_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -539,9 +549,11 @@ export const JobForm: React.FC<JobFormProps> = ({
                   disabled={loading}
                   className="w-full bg-bg border border-line py-1.5 px-2 text-copy focus:border-action focus:outline-none"
                 >
-                  <option value="blur">Blur Pillarbox (Lanczos)</option>
-                  <option value="center">Center Crop</option>
-                  <option value="stacked">Stacked Cam/Game</option>
+                  {REFRAME_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

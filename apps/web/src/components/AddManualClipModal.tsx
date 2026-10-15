@@ -1,5 +1,11 @@
 import React, { useState } from "react";
-import { Job, ManualClipSegment } from "../types";
+import {
+  Job,
+  ManualClipSegment,
+  REFRAME_OPTIONS,
+  SUBTITLE_POSITION_OPTIONS,
+  SUBTITLE_PRESET_OPTIONS,
+} from "../types";
 import { getYoutubeThumbnail } from "../api";
 import { Film, Plus, Scissors, Trash2, X, Zap } from "lucide-react";
 
@@ -315,13 +321,11 @@ export const AddManualClipModal: React.FC<AddManualClipModalProps> = ({
                 disabled={loading}
                 className="w-full bg-bg border border-line py-1.5 px-2 text-copy text-xs focus:border-action focus:outline-none"
               >
-                <option value="none">Tanpa Subtitle (No Subtitle - Cepat)</option>
-                <option value="classic_white">Classic White (Putih)</option>
-                <option value="fire_orange">Fire Orange (Oranye)</option>
-                <option value="hormozi_bold">Hormozi Bold (Kuning/Hijau)</option>
-                <option value="mrbeast_box">MrBeast Box (Bold Gold)</option>
-                <option value="neon_glow">Neon Glow (Cyan/Magenta)</option>
-                <option value="minimal_clean">Minimal Clean (Putih Minimalis)</option>
+                {SUBTITLE_PRESET_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -335,8 +339,11 @@ export const AddManualClipModal: React.FC<AddManualClipModalProps> = ({
                 disabled={loading || subtitleStyle === "none"}
                 className="w-full bg-bg border border-line py-1.5 px-2 text-copy text-xs focus:border-action focus:outline-none"
               >
-                <option value="bottom">Bawah (Y=1680 Standar)</option>
-                <option value="top">Atas (Y=420 Shorts Safe)</option>
+                {SUBTITLE_POSITION_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -350,9 +357,11 @@ export const AddManualClipModal: React.FC<AddManualClipModalProps> = ({
                 disabled={loading}
                 className="w-full bg-bg border border-line py-1.5 px-2 text-copy text-xs focus:border-action focus:outline-none"
               >
-                <option value="blur">Blur Pillarbox (Lanczos)</option>
-                <option value="center">Center Crop</option>
-                <option value="stacked">Stacked Cam/Game</option>
+                {REFRAME_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
