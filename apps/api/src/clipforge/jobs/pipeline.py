@@ -561,10 +561,12 @@ async def stage_render_clips(
     if cand_ids and isinstance(cand_ids, list) and len(cand_ids) > 0:
         placeholders = ",".join("?" for _ in cand_ids)
         query = f"""
-            SELECT id, rank, COALESCE(user_start_s, start_s), COALESCE(user_end_s, end_s), title, category
-            FROM candidates
-            WHERE job_id = ? AND id IN ({placeholders})
-            ORDER BY rank ASC, final_score DESC
+            SELECT c.id, c.rank, COALESCE(c.user_start_s, c.start_s), COALESCE(c.user_end_s, c.end_s),
+                   c.title, c.category, COALESCE(c.render_mode, 'preset'), sg.scene_json
+            FROM candidates c
+            LEFT JOIN scene_graphs sg ON c.id = sg.candidate_id
+            WHERE c.job_id = ? AND c.id IN ({placeholders})
+            ORDER BY c.rank ASC, c.final_score DESC
         """
         params: tuple[Any, ...] = (job_id, *cand_ids)
     else:

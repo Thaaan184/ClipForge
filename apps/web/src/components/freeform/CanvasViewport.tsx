@@ -92,24 +92,37 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     setPan({ x: 0, y: 0 });
   };
 
-  // Mouse wheel zoom directly into cursor position
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const mX = e.clientX - rect.left;
-    const mY = e.clientY - rect.top;
+  // Mouse wheel zoom directly into cursor position (non-passive listener)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    const nextZoom = Math.min(5, Math.max(0.25, Math.round(userZoom * factor * 100) / 100));
-    if (nextZoom === userZoom) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      const mX = e.clientX - rect.left;
+      const mY = e.clientY - rect.top;
 
-    const newPanX = mX - (mX - pan.x) * (nextZoom / userZoom);
-    const newPanY = mY - (mY - pan.y) * (nextZoom / userZoom);
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      setUserZoom((prevZoom) => {
+        const nextZoom = Math.min(5, Math.max(0.25, Math.round(prevZoom * factor * 100) / 100));
+        if (nextZoom === prevZoom) return prevZoom;
 
-    setUserZoom(nextZoom);
-    setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
-  };
+        setPan((prevPan) => {
+          const newPanX = mX - (mX - prevPan.x) * (nextZoom / prevZoom);
+          const newPanY = mY - (mY - prevPan.y) * (nextZoom / prevZoom);
+          return { x: Math.round(newPanX), y: Math.round(newPanY) };
+        });
+
+        return nextZoom;
+      });
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", onWheel);
+    };
+  }, []);
 
   // Main Canvas2D render loop (~60 FPS)
   useEffect(() => {
@@ -437,7 +450,6 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   return (
     <div
       ref={containerRef}
-      onWheel={handleWheel}
       className="relative flex-1 h-full bg-[#0D0D0D] flex items-center justify-center overflow-hidden select-none"
     >
       {/* 9:16 Canvas Box */}

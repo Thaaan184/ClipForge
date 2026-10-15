@@ -183,24 +183,37 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
   };
 
-  // Zoom directly into mouse cursor on mouse wheel
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const mX = e.clientX - rect.left;
-    const mY = e.clientY - rect.top;
+  // Zoom directly into mouse cursor on wheel with non-passive listener
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    const nextZoom = Math.min(5, Math.max(0.5, Math.round(zoom * factor * 100) / 100));
-    if (nextZoom === zoom) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      const mX = e.clientX - rect.left;
+      const mY = e.clientY - rect.top;
 
-    const newPanX = mX - (mX - pan.x) * (nextZoom / zoom);
-    const newPanY = mY - (mY - pan.y) * (nextZoom / zoom);
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      setZoom((prevZoom) => {
+        const nextZoom = Math.min(5, Math.max(0.5, Math.round(prevZoom * factor * 100) / 100));
+        if (nextZoom === prevZoom) return prevZoom;
 
-    setZoom(nextZoom);
-    setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
-  };
+        setPan((prevPan) => {
+          const newPanX = mX - (mX - prevPan.x) * (nextZoom / prevZoom);
+          const newPanY = mY - (mY - prevPan.y) * (nextZoom / prevZoom);
+          return { x: Math.round(newPanX), y: Math.round(newPanY) };
+        });
+
+        return nextZoom;
+      });
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", onWheel);
+    };
+  }, []);
 
   // Convert client coordinates (screen clientX/clientY) -> Source pixel space (0..sourceWidth, 0..sourceHeight)
   const clientToSource = useCallback(
@@ -609,7 +622,6 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
       {/* Video + Interactive Canvas Container */}
       <div
         ref={containerRef}
-        onWheel={handleWheel}
         className="relative flex-1 bg-black overflow-hidden"
       >
         <div
