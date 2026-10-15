@@ -42,17 +42,37 @@ export const TransformGizmo: React.FC<TransformGizmoProps> = ({
         let newCx = Math.round(initialTransform.cx + dx);
         let newCy = Math.round(initialTransform.cy + dy);
 
-        // Center snap guides (within 10px)
+        const halfW = initialTransform.w / 2;
+        const halfH = initialTransform.h / 2;
+        const SNAP_THRESHOLD = 12;
+
         let snapX: number | null = null;
         let snapY: number | null = null;
-        if (Math.abs(newCx - 540) < 10) {
+
+        // Snapping X: Center (540), Left (0), Right (1080)
+        if (Math.abs(newCx - 540) < SNAP_THRESHOLD) {
           newCx = 540;
           snapX = 540;
+        } else if (Math.abs(newCx - halfW) < SNAP_THRESHOLD) {
+          newCx = Math.round(halfW);
+          snapX = 0;
+        } else if (Math.abs(newCx + halfW - 1080) < SNAP_THRESHOLD) {
+          newCx = Math.round(1080 - halfW);
+          snapX = 1080;
         }
-        if (Math.abs(newCy - 960) < 10) {
+
+        // Snapping Y: Center (960), Top (0), Bottom (1920)
+        if (Math.abs(newCy - 960) < SNAP_THRESHOLD) {
           newCy = 960;
           snapY = 960;
+        } else if (Math.abs(newCy - halfH) < SNAP_THRESHOLD) {
+          newCy = Math.round(halfH);
+          snapY = 0;
+        } else if (Math.abs(newCy + halfH - 1920) < SNAP_THRESHOLD) {
+          newCy = Math.round(1920 - halfH);
+          snapY = 1920;
         }
+
         onSnapGuideChange?.({ x: snapX, y: snapY });
         onTransformChange({ cx: newCx, cy: newCy });
       } else if (activeHandle === "rot") {
@@ -82,36 +102,45 @@ export const TransformGizmo: React.FC<TransformGizmoProps> = ({
 
         let dw = 0;
         let dh = 0;
-        let dCenterLocalX = 0;
-        let dCenterLocalY = 0;
 
-        if (activeHandle.includes("e")) {
-          dw = localDx;
-          dCenterLocalX = localDx / 2;
-        }
-        if (activeHandle.includes("w")) {
-          dw = -localDx;
-          dCenterLocalX = localDx / 2;
-        }
-        if (activeHandle.includes("s")) {
-          dh = localDy;
-          dCenterLocalY = localDy / 2;
-        }
-        if (activeHandle.includes("n")) {
-          dh = -localDy;
-          dCenterLocalY = localDy / 2;
-        }
+        if (activeHandle.includes("e")) dw = localDx;
+        if (activeHandle.includes("w")) dw = -localDx;
+        if (activeHandle.includes("s")) dh = localDy;
+        if (activeHandle.includes("n")) dh = -localDy;
 
         let newW = Math.max(40, initialTransform.w + dw);
         let newH = Math.max(40, initialTransform.h + dh);
 
         if (layer.transform.lock_aspect || e.shiftKey) {
-          const ratio = initialTransform.w / initialTransform.h;
-          if (Math.abs(dw) > Math.abs(dh)) {
+          const ratio = initialTransform.w / Math.max(1, initialTransform.h);
+          if (activeHandle === "e" || activeHandle === "w") {
             newH = Math.max(40, Math.round(newW / ratio));
-          } else {
+          } else if (activeHandle === "n" || activeHandle === "s") {
             newW = Math.max(40, Math.round(newH * ratio));
+          } else {
+            // Corner handles: preserve ratio based on dominant axis
+            if (Math.abs(dw) > Math.abs(dh)) {
+              newH = Math.max(40, Math.round(newW / ratio));
+            } else {
+              newW = Math.max(40, Math.round(newH * ratio));
+            }
           }
+        }
+
+        // Anchor opposite edge/corner stationary
+        let dCenterLocalX = 0;
+        let dCenterLocalY = 0;
+
+        if (activeHandle.includes("e")) {
+          dCenterLocalX = (newW - initialTransform.w) / 2;
+        } else if (activeHandle.includes("w")) {
+          dCenterLocalX = -(newW - initialTransform.w) / 2;
+        }
+
+        if (activeHandle.includes("s")) {
+          dCenterLocalY = (newH - initialTransform.h) / 2;
+        } else if (activeHandle.includes("n")) {
+          dCenterLocalY = -(newH - initialTransform.h) / 2;
         }
 
         // Convert center shift back to world coordinates

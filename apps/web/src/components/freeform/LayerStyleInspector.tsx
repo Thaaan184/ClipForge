@@ -1,5 +1,19 @@
 import React from "react";
-import { Sliders, Sun, Shield, Lock, Unlock, RefreshCw } from "lucide-react";
+import {
+  Sliders,
+  Sun,
+  Shield,
+  Lock,
+  Unlock,
+  RefreshCw,
+  AlignStartHorizontal,
+  AlignCenterHorizontal,
+  AlignEndHorizontal,
+  AlignStartVertical,
+  AlignCenterVertical,
+  AlignEndVertical,
+  Maximize2,
+} from "lucide-react";
 import { useSceneStore } from "../../lib/scene/store";
 
 export const LayerStyleInspector: React.FC = () => {
@@ -179,6 +193,78 @@ export const LayerStyleInspector: React.FC = () => {
       </div>
 
       <div className="space-y-4 text-xs font-mono">
+        {/* Quick Alignment Actions */}
+        <div>
+          <span className="text-[10px] text-[#888888] uppercase block mb-1.5">Alignment / Posisi</span>
+          <div className="grid grid-cols-4 gap-1 mb-2">
+            <button
+              onClick={() => updateLayerTransform(selectedLayer.id, { cx: Math.round(t.w / 2) })}
+              title="Rata Kiri (Left)"
+              className="p-1.5 bg-[#222222] hover:bg-[#333333] hover:text-[#00FFCC] text-[#AAAAAA] rounded flex items-center justify-center transition"
+            >
+              <AlignStartHorizontal size={14} />
+            </button>
+            <button
+              onClick={() => updateLayerTransform(selectedLayer.id, { cx: 540 })}
+              title="Tengah Horizontal (Center X 540)"
+              className="p-1.5 bg-[#222222] hover:bg-[#333333] hover:text-[#00FFCC] text-[#AAAAAA] rounded flex items-center justify-center transition"
+            >
+              <AlignCenterHorizontal size={14} />
+            </button>
+            <button
+              onClick={() => updateLayerTransform(selectedLayer.id, { cx: Math.round(1080 - t.w / 2) })}
+              title="Rata Kanan (Right)"
+              className="p-1.5 bg-[#222222] hover:bg-[#333333] hover:text-[#00FFCC] text-[#AAAAAA] rounded flex items-center justify-center transition"
+            >
+              <AlignEndHorizontal size={14} />
+            </button>
+            <button
+              onClick={() => {
+                const aspect = t.w / Math.max(1, t.h);
+                const newW = 1080;
+                const newH = t.lock_aspect ? Math.round(1080 / aspect) : t.h;
+                updateLayerTransform(selectedLayer.id, {
+                  w: newW,
+                  h: newH,
+                  cx: 540,
+                });
+              }}
+              title="Penuhi Lebar Kanvas (Fit Width 1080)"
+              className="p-1.5 bg-[#222222] hover:bg-[#333333] hover:text-[#00FFCC] text-[#AAAAAA] rounded flex items-center justify-center transition"
+            >
+              <Maximize2 size={14} />
+            </button>
+            <button
+              onClick={() => updateLayerTransform(selectedLayer.id, { cy: Math.round(t.h / 2) })}
+              title="Rata Atas (Top)"
+              className="p-1.5 bg-[#222222] hover:bg-[#333333] hover:text-[#00FFCC] text-[#AAAAAA] rounded flex items-center justify-center transition"
+            >
+              <AlignStartVertical size={14} />
+            </button>
+            <button
+              onClick={() => updateLayerTransform(selectedLayer.id, { cy: 960 })}
+              title="Tengah Vertikal (Center Y 960)"
+              className="p-1.5 bg-[#222222] hover:bg-[#333333] hover:text-[#00FFCC] text-[#AAAAAA] rounded flex items-center justify-center transition"
+            >
+              <AlignCenterVertical size={14} />
+            </button>
+            <button
+              onClick={() => updateLayerTransform(selectedLayer.id, { cy: Math.round(1920 - t.h / 2) })}
+              title="Rata Bawah (Bottom)"
+              className="p-1.5 bg-[#222222] hover:bg-[#333333] hover:text-[#00FFCC] text-[#AAAAAA] rounded flex items-center justify-center transition"
+            >
+              <AlignEndVertical size={14} />
+            </button>
+            <button
+              onClick={() => updateLayerTransform(selectedLayer.id, { cx: 540, cy: 960, rotation: 0 })}
+              title="Pusat Kanvas Total (540:960)"
+              className="p-1.5 bg-[#222222] hover:bg-[#333333] hover:text-[#FF6A00] text-[#AAAAAA] rounded flex items-center justify-center font-bold text-[9px] transition"
+            >
+              MID
+            </button>
+          </div>
+        </div>
+
         {/* Transform: Position & Size */}
         <div>
           <span className="text-[10px] text-[#888888] uppercase block mb-1.5">Transformasi</span>
