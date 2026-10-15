@@ -6,7 +6,7 @@ import {
   ShapeConfig,
 } from "../../types";
 
-export type ToolType = "select" | "rect" | "ellipse" | "lasso";
+export type ToolType = "select" | "rect" | "ellipse" | "lasso" | "pan";
 
 export interface DraftShape {
   type: "rect" | "ellipse" | "lasso";

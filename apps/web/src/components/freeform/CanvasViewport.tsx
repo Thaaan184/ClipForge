@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import { useSceneStore } from "../../lib/scene/store";
 import { hitTestLayer } from "../../lib/scene/geometry";
 import { LayerConfig } from "../../types";
@@ -26,6 +27,15 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     y: null,
   });
 
+  // User Zoom & Pan state
+  const [userZoom, setUserZoom] = useState(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [isSpaceDown, setIsSpaceDown] = useState(false);
+  const panStartRef = useRef<{ mouseX: number; mouseY: number; panX: number; panY: number } | null>(null);
+
+  const effectiveScale = viewportScale * userZoom;
+
   // Calculate scaling to fit 1080x1920 in viewport container
   const updateLayout = useCallback(() => {
     if (!containerRef.current) return;
@@ -43,6 +53,55 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     window.addEventListener("resize", updateLayout);
     return () => window.removeEventListener("resize", updateLayout);
   }, [updateLayout]);
+
+  // Spacebar listener for canvas panning
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && (e.target as HTMLElement)?.tagName !== "INPUT") {
+        setIsSpaceDown(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        setIsSpaceDown(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  // Zoom helpers
+  const handleZoomIn = () => {
+    setUserZoom((prev) => Math.min(4, Math.round((prev + 0.25) * 100) / 100));
+  };
+
+  const handleZoomOut = () => {
+    setUserZoom((prev) => {
+      const next = Math.max(0.25, Math.round((prev - 0.25) * 100) / 100);
+      if (next <= 1) setPan({ x: 0, y: 0 });
+      return next;
+    });
+  };
+
+  const handleResetZoom = () => {
+    setUserZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  // Mouse wheel zoom
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.2 : -0.2;
+    setUserZoom((prev) => {
+      const next = Math.min(4, Math.max(0.25, Math.round((prev + delta) * 100) / 100));
+      if (next <= 1) setPan({ x: 0, y: 0 });
+      return next;
+    });
+  };
 
   // Main Canvas2D render loop (~60 FPS)
   useEffect(() => {
@@ -82,9 +141,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, cw, ch);
       } else if (bg.type === "blur_source" && video && video.readyState >= 2) {
-        // Draw blurred stretched video
         ctx.filter = `blur(${bg.blur_sigma || 40}px)`;
-        // Enlarge slightly to cover blur boundary
         ctx.drawImage(video, -40, -40, cw + 80, ch + 80);
         ctx.filter = "none";
       } else {
@@ -117,7 +174,6 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
           ctx.shadowOffsetX = s.shadow.offset_x;
           ctx.shadowOffsetY = s.shadow.offset_y;
 
-          // Trace shape path for shadow cast
           ctx.beginPath();
           if (sh.type === "rect") {
             if (s.corner_radius > 0 && typeof (ctx as any).roundRect === "function") {
@@ -172,7 +228,6 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
 
         // Draw source video texture inside clipped region
         if (video && video.readyState >= 2) {
-          // Absolute pixel crop in video coordinates
           const vScaleX = video.videoWidth / Math.max(1, sourceWidth);
           const vScaleY = video.videoHeight / Math.max(1, sourceHeight);
 
@@ -190,7 +245,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
         // Inner / outer border stroke
         if (s.border_width > 0) {
           ctx.strokeStyle = s.border_color;
-          ctx.lineWidth = s.border_width * 2; // Clip clips half of stroke width
+          ctx.lineWidth = s.border_width * 2;
           ctx.stroke();
         }
 
@@ -211,16 +266,32 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     initialTransform: LayerConfig["transform"];
   } | null>(null);
 
-  // Pointer down on canvas to select & hold-and-drag layer
+  // Pointer down on canvas: Pan OR Hold-and-drag layer
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!scene) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // Pan mode: Space pressed OR Middle click
+    if (isSpaceDown || e.button === 1) {
+      setIsPanning(true);
+      panStartRef.current = {
+        mouseX: e.clientX,
+        mouseY: e.clientY,
+        panX: pan.x,
+        panY: pan.y,
+      };
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {}
+      return;
+    }
+
+    if (!scene) return;
     const rect = canvas.getBoundingClientRect();
     const clickX = ((e.clientX - rect.left) / rect.width) * 1080;
     const clickY = ((e.clientY - rect.top) / rect.height) * 1920;
 
-    // Top to bottom in z-index order
+    // Check hit on layers top-to-bottom
     const sorted = [...scene.layers].sort((a, b) => b.transform.z - a.transform.z);
     for (const lyr of sorted) {
       if (!lyr.visible || lyr.locked) continue;
@@ -238,15 +309,40 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
         return;
       }
     }
-    // Deselect if click empty canvas
+
+    // Clicked empty canvas space -> deselect layer and allow panning
     setSelectedLayerId(null);
     setDragState(null);
+    setIsPanning(true);
+    panStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {}
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isPanning && panStartRef.current) {
+      const dx = e.clientX - panStartRef.current.mouseX;
+      const dy = e.clientY - panStartRef.current.mouseY;
+      setPan({
+        x: Math.round(panStartRef.current.panX + dx),
+        y: Math.round(panStartRef.current.panY + dy),
+      });
+      return;
+    }
+
     if (!dragState) {
       // Hover cursor feedback
       if (!scene || !canvasRef.current) return;
+      if (isSpaceDown) {
+        canvasRef.current.style.cursor = "grab";
+        return;
+      }
       const rect = canvasRef.current.getBoundingClientRect();
       const hoverX = ((e.clientX - rect.left) / rect.width) * 1080;
       const hoverY = ((e.clientY - rect.top) / rect.height) * 1920;
@@ -257,8 +353,8 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       return;
     }
 
-    const dx = (e.clientX - dragState.startMouseX) / viewportScale;
-    const dy = (e.clientY - dragState.startMouseY) / viewportScale;
+    const dx = (e.clientX - dragState.startMouseX) / effectiveScale;
+    const dy = (e.clientY - dragState.startMouseY) / effectiveScale;
 
     let newCx = Math.round(dragState.initialTransform.cx + dx);
     let newCy = Math.round(dragState.initialTransform.cy + dy);
@@ -305,6 +401,8 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       } catch {}
     }
     setDragState(null);
+    setIsPanning(false);
+    panStartRef.current = null;
     setSnapGuides({ x: null, y: null });
   };
 
@@ -331,14 +429,16 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   return (
     <div
       ref={containerRef}
+      onWheel={handleWheel}
       className="relative flex-1 h-full bg-[#0D0D0D] flex items-center justify-center overflow-hidden select-none"
     >
       {/* 9:16 Canvas Box */}
       <div
-        className="relative shadow-2xl border border-[#333333]"
+        className="relative shadow-2xl border border-[#333333] transition-transform duration-75"
         style={{
-          width: `${1080 * viewportScale}px`,
-          height: `${1920 * viewportScale}px`,
+          width: `${1080 * effectiveScale}px`,
+          height: `${1920 * effectiveScale}px`,
+          transform: `translate(${pan.x}px, ${pan.y}px)`,
         }}
       >
         <canvas
@@ -356,13 +456,13 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
         {snapGuides.x !== null && (
           <div
             className="absolute top-0 bottom-0 w-[1px] bg-[#FF6A00] pointer-events-none z-30"
-            style={{ left: `${snapGuides.x * viewportScale}px` }}
+            style={{ left: `${snapGuides.x * effectiveScale}px` }}
           />
         )}
         {snapGuides.y !== null && (
           <div
             className="absolute left-0 right-0 h-[1px] bg-[#FF6A00] pointer-events-none z-30"
-            style={{ top: `${snapGuides.y * viewportScale}px` }}
+            style={{ top: `${snapGuides.y * effectiveScale}px` }}
           />
         )}
 
@@ -370,7 +470,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
         {selectedLayer && (
           <TransformGizmo
             layer={selectedLayer}
-            canvasScale={viewportScale}
+            canvasScale={effectiveScale}
             viewportOffset={{ x: 0, y: 0 }}
             onTransformChange={(t) => updateLayerTransform(selectedLayer.id, t)}
             onSnapGuideChange={setSnapGuides}
@@ -378,9 +478,44 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
         )}
       </div>
 
-      {/* Canvas Dimensions Badge */}
-      <div className="absolute bottom-2 right-2 bg-black/70 px-2 py-0.5 rounded text-[10px] font-mono text-[#888888] border border-[#222222]">
-        9:16 1080×1920 ({Math.round(viewportScale * 100)}%)
+      {/* Floating Zoom Bar for Canvas Panel */}
+      <div className="absolute bottom-2 right-2 z-30 flex items-center gap-1 bg-[#141414]/90 border border-[#333333] backdrop-blur-sm rounded px-1.5 py-1 text-xs font-mono shadow-xl">
+        <button
+          onClick={handleZoomOut}
+          disabled={userZoom <= 0.25}
+          title="Zoom Out (-)"
+          className="p-1 hover:text-[#00FFCC] text-[#AAAAAA] disabled:opacity-30 rounded hover:bg-[#222222]"
+        >
+          <ZoomOut size={13} />
+        </button>
+        <button
+          onClick={handleResetZoom}
+          title="Klik untuk Reset Zoom (Fit)"
+          className="px-1.5 py-0.5 hover:text-white text-[#888888] hover:bg-[#222222] rounded text-[11px]"
+        >
+          {Math.round(userZoom * 100)}%
+        </button>
+        <button
+          onClick={handleZoomIn}
+          disabled={userZoom >= 4.0}
+          title="Zoom In (+)"
+          className="p-1 hover:text-[#00FFCC] text-[#AAAAAA] disabled:opacity-30 rounded hover:bg-[#222222]"
+        >
+          <ZoomIn size={13} />
+        </button>
+        <div className="w-[1px] h-3 bg-[#333333] mx-0.5" />
+        <button
+          onClick={handleResetZoom}
+          title="Fit ke Layar"
+          className="p-1 hover:text-[#FF6A00] text-[#AAAAAA] rounded hover:bg-[#222222]"
+        >
+          <Maximize2 size={13} />
+        </button>
+      </div>
+
+      {/* Canvas Dimensions Badge (bottom left) */}
+      <div className="absolute bottom-2 left-2 bg-black/70 px-2 py-0.5 rounded text-[10px] font-mono text-[#888888] border border-[#222222] pointer-events-none">
+        9:16 1080×1920 | Scroll untuk Zoom | Spasi + Drag untuk Geser
       </div>
     </div>
   );

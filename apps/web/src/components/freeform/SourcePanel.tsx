@@ -1,5 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Check, X, Square, Circle, Edit3, MousePointer, Play, Pause } from "lucide-react";
+import {
+  Check,
+  X,
+  Square,
+  Circle,
+  Edit3,
+  MousePointer,
+  Play,
+  Pause,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Hand,
+} from "lucide-react";
 import { useSceneStore } from "../../lib/scene/store";
 import { simplifyLasso } from "../../lib/scene/geometry";
 
@@ -50,6 +63,13 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     height: 0,
   });
 
+  // Zoom & Pan state
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [isSpaceDown, setIsSpaceDown] = useState(false);
+  const panStartRef = useRef<{ mouseX: number; mouseY: number; panX: number; panY: number } | null>(null);
+
   // Calculate exact inner video display dimensions to prevent letterbox offsets
   const updateFrameDims = useCallback(() => {
     if (!containerRef.current) return;
@@ -72,11 +92,9 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     let vH = cH;
 
     if (cAspect > vAspect) {
-      // Container is wider than video -> height is constraint
       vH = cH;
       vW = Math.round(cH * vAspect);
     } else {
-      // Container is taller than video -> width is constraint
       vW = cW;
       vH = Math.round(cW / vAspect);
     }
@@ -108,6 +126,55 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     const sy = sourceHeight / Math.max(1, rect.height);
     return { sx, sy, width: rect.width, height: rect.height };
   }, [sourceWidth, sourceHeight]);
+
+  // Spacebar listener for temporary pan mode
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && (e.target as HTMLElement)?.tagName !== "INPUT") {
+        setIsSpaceDown(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        setIsSpaceDown(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  // Zoom helpers
+  const handleZoomIn = () => {
+    setZoom((prev) => Math.min(4, Math.round((prev + 0.25) * 100) / 100));
+  };
+
+  const handleZoomOut = () => {
+    setZoom((prev) => {
+      const next = Math.max(0.5, Math.round((prev - 0.25) * 100) / 100);
+      if (next <= 1) setPan({ x: 0, y: 0 });
+      return next;
+    });
+  };
+
+  const handleResetZoom = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  // Mouse wheel zoom
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.2 : -0.2;
+    setZoom((prev) => {
+      const next = Math.min(4, Math.max(0.5, Math.round((prev + delta) * 100) / 100));
+      if (next <= 1) setPan({ x: 0, y: 0 });
+      return next;
+    });
+  };
 
   // Video playback constraints
   useEffect(() => {
@@ -231,17 +298,34 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
         ctx.stroke();
       }
     }
-  }, [scene, selectedLayerId, draftShape, getScale, frameDims]);
+  }, [scene, selectedLayerId, draftShape, getScale, frameDims, zoom]);
 
   useEffect(() => {
     drawOverlay();
   }, [drawOverlay]);
 
-  // Pointer events for drawing shapes
+  // Pointer events for drawing shapes & panning
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Pan mode: Space held OR Hand tool OR Middle mouse button
+    if (isSpaceDown || activeTool === "pan" || e.button === 1) {
+      setIsPanning(true);
+      panStartRef.current = {
+        mouseX: e.clientX,
+        mouseY: e.clientY,
+        panX: pan.x,
+        panY: pan.y,
+      };
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {}
+      return;
+    }
+
     if (activeTool === "select") {
-      const canvas = canvasRef.current;
-      if (!canvas || !scene) return;
+      if (!scene) return;
       const rect = canvas.getBoundingClientRect();
       const x = (e.clientX - rect.left) * (sourceWidth / Math.max(1, rect.width));
       const y = (e.clientY - rect.top) * (sourceHeight / Math.max(1, rect.height));
@@ -259,8 +343,6 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
       return;
     }
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {}
@@ -323,6 +405,16 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isPanning && panStartRef.current) {
+      const dx = e.clientX - panStartRef.current.mouseX;
+      const dy = e.clientY - panStartRef.current.mouseY;
+      setPan({
+        x: Math.round(panStartRef.current.panX + dx),
+        y: Math.round(panStartRef.current.panY + dy),
+      });
+      return;
+    }
+
     if (!isDrawing || !dragStart || !draftShape) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -357,7 +449,14 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
       } catch {}
     }
 
+    if (isPanning) {
+      setIsPanning(false);
+      panStartRef.current = null;
+      return;
+    }
+
     if (!isDrawing || !draftShape) return;
+
     if (activeTool === "rect" || activeTool === "ellipse") {
       setIsDrawing(false);
       if (draftShape.bbox.w > 20 && draftShape.bbox.h > 20) {
@@ -372,7 +471,6 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     if (!draftShape || !draftShape.isComplete) return;
 
     if (editingLayerId) {
-      // Re-editing existing layer shape
       updateLayerShape(editingLayerId, {
         type: draftShape.type,
         bbox: draftShape.bbox,
@@ -381,7 +479,6 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
       setEditingLayerId(null);
       setDraftShape(null);
     } else {
-      // Add as new layer
       addLayerFromDraft(sourceId);
     }
   };
@@ -404,6 +501,13 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   });
+
+  const getCanvasCursor = () => {
+    if (isPanning) return "cursor-grabbing";
+    if (isSpaceDown || activeTool === "pan") return "cursor-grab";
+    if (activeTool === "select") return "cursor-pointer";
+    return "cursor-crosshair";
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#141414] border-r border-[#2A2A2A] relative select-none">
@@ -449,6 +553,15 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
           >
             <Edit3 size={14} />
           </button>
+          <button
+            onClick={() => setActiveTool("pan")}
+            title="Geser Tampilan Video (Hand Tool / Spasi)"
+            className={`p-1.5 rounded text-xs transition ${
+              activeTool === "pan" ? "bg-[#00FFCC] text-black" : "text-[#AAAAAA] hover:bg-[#222222]"
+            }`}
+          >
+            <Hand size={14} />
+          </button>
         </div>
 
         {/* Play / Pause & Scrubber */}
@@ -468,13 +581,15 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
       {/* Video + Interactive Canvas Container */}
       <div
         ref={containerRef}
+        onWheel={handleWheel}
         className="relative flex-1 bg-black flex items-center justify-center p-2 overflow-hidden"
       >
         <div
-          className="relative shadow-lg"
+          className="relative shadow-lg transition-transform duration-75"
           style={{
-            width: frameDims.width > 0 ? `${frameDims.width}px` : "100%",
-            height: frameDims.height > 0 ? `${frameDims.height}px` : "100%",
+            width: frameDims.width > 0 ? `${frameDims.width * zoom}px` : "100%",
+            height: frameDims.height > 0 ? `${frameDims.height * zoom}px` : "100%",
+            transform: `translate(${pan.x}px, ${pan.y}px)`,
           }}
         >
           <video
@@ -492,7 +607,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            className="absolute inset-0 w-full h-full cursor-crosshair"
+            className={`absolute inset-0 w-full h-full ${getCanvasCursor()}`}
           />
 
           {/* Draft Confirmation Buttons Near Shape */}
@@ -503,14 +618,14 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
                 left: `${Math.max(
                   10,
                   Math.min(
-                    (frameDims.width || 400) - 150,
+                    (frameDims.width * zoom || 400) - 150,
                     (draftShape.bbox.x + draftShape.bbox.w / 2) / getScale().sx - 60
                   )
                 )}px`,
                 top: `${Math.max(
                   10,
                   Math.min(
-                    (frameDims.height || 300) - 40,
+                    (frameDims.height * zoom || 300) - 40,
                     (draftShape.bbox.y + draftShape.bbox.h) / getScale().sy + 10
                   )
                 )}px`,
@@ -531,12 +646,47 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
             </div>
           )}
         </div>
+
+        {/* Floating Zoom Bar for Source Panel */}
+        <div className="absolute bottom-2 right-2 z-30 flex items-center gap-1 bg-[#141414]/90 border border-[#333333] backdrop-blur-sm rounded px-1.5 py-1 text-xs font-mono shadow-xl">
+          <button
+            onClick={handleZoomOut}
+            disabled={zoom <= 0.5}
+            title="Zoom Out (-)"
+            className="p-1 hover:text-[#00FFCC] text-[#AAAAAA] disabled:opacity-30 rounded hover:bg-[#222222]"
+          >
+            <ZoomOut size={13} />
+          </button>
+          <button
+            onClick={handleResetZoom}
+            title="Klik untuk Reset Zoom (Fit)"
+            className="px-1.5 py-0.5 hover:text-white text-[#888888] hover:bg-[#222222] rounded text-[11px]"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            onClick={handleZoomIn}
+            disabled={zoom >= 4.0}
+            title="Zoom In (+)"
+            className="p-1 hover:text-[#00FFCC] text-[#AAAAAA] disabled:opacity-30 rounded hover:bg-[#222222]"
+          >
+            <ZoomIn size={13} />
+          </button>
+          <div className="w-[1px] h-3 bg-[#333333] mx-0.5" />
+          <button
+            onClick={handleResetZoom}
+            title="Fit ke Layar"
+            className="p-1 hover:text-[#FF6A00] text-[#AAAAAA] rounded hover:bg-[#222222]"
+          >
+            <Maximize2 size={13} />
+          </button>
+        </div>
       </div>
 
       {/* Bottom Hint */}
       <div className="px-3 py-1 bg-[#0A0A0A] border-t border-[#2A2A2A] text-[10px] text-[#666666] flex justify-between">
-        <span>Tarik kursor untuk Rect/Elips | Klik titik demi titik untuk Lasso</span>
-        <span>Enter = Simpan | Esc = Batal</span>
+        <span>Tahan Spasi / Hand Tool untuk geser | Scroll mouse untuk Zoom</span>
+        <span>Enter = Simpan Cut | Esc = Batal</span>
       </div>
     </div>
   );
