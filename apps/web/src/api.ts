@@ -459,6 +459,28 @@ export async function createScenePreset(
   return res.json();
 }
 
+export async function updateScenePreset(
+  presetId: string,
+  scene: SceneGraph,
+  name?: string
+): Promise<ScenePreset> {
+  const res = await fetch(`${API_BASE}/api/presets/scenes/${presetId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, scene }),
+  });
+  if (!res.ok) {
+    let msg = `Gagal memperbarui preset (HTTP ${res.status})`;
+    try {
+      const err = await res.json();
+      if (typeof err.detail === "string") msg = err.detail;
+      else if (Array.isArray(err.detail)) msg = err.detail.map((d: any) => d.msg).join("; ");
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 export async function deleteScenePreset(presetId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/presets/scenes/${presetId}`, {
     method: "DELETE",

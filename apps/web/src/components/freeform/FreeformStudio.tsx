@@ -11,7 +11,6 @@ import {
   FolderOpen,
   Trash2,
   ChevronDown,
-  Sparkles,
 } from "lucide-react";
 import {
   getCandidateScene,
@@ -22,6 +21,7 @@ import {
   getSegmentProxyUrl,
   getScenePresets,
   createScenePreset,
+  updateScenePreset,
   deleteScenePreset,
 } from "../../api";
 import { SceneGraph, ScenePreset } from "../../types";
@@ -77,6 +77,9 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
   const [customPresets, setCustomPresets] = useState<ScenePreset[]>([]);
   const [showPresetDropdown, setShowPresetDropdown] = useState(false);
   const [isPresetModalOpen, setIsPresetModalOpen] = useState(false);
+  const [presetSaveMode, setPresetSaveMode] = useState<"overwrite" | "new">("new");
+  const [selectedPresetIdForOverwrite, setSelectedPresetIdForOverwrite] = useState<string>("");
+  const [lastAppliedPresetId, setLastAppliedPresetId] = useState<string | null>(null);
   const [presetNameInput, setPresetNameInput] = useState("");
   const [isSavingPreset, setIsSavingPreset] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -235,36 +238,76 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
     }
   };
 
-  // Save 2: Save as reusable Preset
+  // Save 2: Save as reusable Preset (Overwrite existing or Create new)
   const handleOpenPresetModal = () => {
-    setPresetNameInput("");
+    if (customPresets.length > 0) {
+      const targetPreset = customPresets.find((p) => p.id === lastAppliedPresetId) || customPresets[0];
+      setPresetSaveMode("overwrite");
+      setSelectedPresetIdForOverwrite(targetPreset.id);
+      setPresetNameInput(targetPreset.name);
+    } else {
+      setPresetSaveMode("new");
+      setSelectedPresetIdForOverwrite("");
+      setPresetNameInput("");
+    }
     setIsPresetModalOpen(true);
   };
 
   const handleConfirmSavePreset = async () => {
     if (!scene) return;
     const name = presetNameInput.trim();
-    if (!name) {
-      showNotification("Masukkan nama preset terlebih dahulu", "error");
-      return;
-    }
 
     try {
       setIsSavingPreset(true);
-      await createScenePreset(name, scene);
+      if (presetSaveMode === "overwrite") {
+        if (!selectedPresetIdForOverwrite) {
+          showNotification("Pilih preset yang ingin ditimpa", "error");
+          setIsSavingPreset(false);
+          return;
+        }
+        await updateScenePreset(selectedPresetIdForOverwrite, scene, name || undefined);
+        setLastAppliedPresetId(selectedPresetIdForOverwrite);
+        showNotification(`Preset "${name}" berhasil diperbarui (ditimpa)!`);
+      } else {
+        if (!name) {
+          showNotification("Masukkan nama preset terlebih dahulu", "error");
+          setIsSavingPreset(false);
+          return;
+        }
+        const created = await createScenePreset(name, scene);
+        setLastAppliedPresetId(created.id);
+        showNotification(`Preset "${name}" berhasil disimpan!`);
+      }
       await loadPresets();
       setIsSavingPreset(false);
       setIsPresetModalOpen(false);
-      showNotification(`Preset "${name}" berhasil disimpan!`);
     } catch (err: any) {
       setIsSavingPreset(false);
       showNotification(err.message || "Gagal menyimpan preset", "error");
     }
   };
 
-  // Apply a preset to current candidate scene
-  const applyPresetScene = (presetScene: SceneGraph, presetTitle: string) => {
+  // Direct quick overwrite from dropdown
+  const handleQuickOverwritePreset = async (presetId: string, presetName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!scene) return;
+    if (!confirm(`Timpa preset "${presetName}" dengan susunan kanvas saat ini?`)) return;
+    try {
+      await updateScenePreset(presetId, scene);
+      setLastAppliedPresetId(presetId);
+      await loadPresets();
+      showNotification(`Preset "${presetName}" berhasil ditimpa dengan kanvas saat ini!`);
+    } catch (err: any) {
+      showNotification(err.message || "Gagal menimpa preset", "error");
+    }
+  };
+
+  // Apply a preset to current candidate scene
+  const applyPresetScene = (presetScene: SceneGraph, presetTitle: string, presetId?: string) => {
+    if (!scene) return;
+    if (presetId) {
+      setLastAppliedPresetId(presetId);
+    }
     const curSource = scene.sources[0] || {
       id: "src1",
       width: sourceDims.width,
@@ -574,7 +617,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
                     {customPresets.map((p) => (
                       <div
                         key={p.id}
-                        onClick={() => applyPresetScene(p.scene, p.name)}
+                        onClick={() => applyPresetScene(p.scene, p.name, p.id)}
                         className="px-3 py-1.5 hover:bg-[#222222] text-[#DDDDDD] flex items-center justify-between cursor-pointer group"
                       >
                         <div className="truncate pr-2">
@@ -583,13 +626,24 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
                             ({p.scene.layers?.length || 0} cut)
                           </span>
                         </div>
-                        <button
-                          onClick={(e) => handleDeletePreset(p.id, p.name, e)}
-                          title="Hapus Preset"
-                          className="opacity-0 group-hover:opacity-100 p-1 text-[#666666] hover:text-[#FF4444] transition"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => handleQuickOverwritePreset(p.id, p.name, e)}
+                            title="Timpa preset ini dengan kanvas sekarang"
+                            className="opacity-0 group-hover:opacity-100 p-1 text-[#888888] hover:text-[#00FFCC] transition"
+                          >
+                            <Save size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeletePreset(p.id, p.name, e)}
+                            title="Hapus Preset"
+                            className="opacity-0 group-hover:opacity-100 p-1 text-[#666666] hover:text-[#FF4444] transition"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -716,7 +770,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
         </div>
       )}
 
-      {/* Modal: Simpan Sebagai Preset Baru */}
+      {/* Modal: Simpan / Timpa Preset */}
       {isPresetModalOpen && (
         <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4">
           <div className="bg-[#141414] border border-[#2E2E2E] rounded-lg shadow-2xl max-w-md w-full p-5 space-y-4 font-mono">
@@ -724,7 +778,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
               <div className="flex items-center gap-2">
                 <BookmarkPlus size={16} className="text-[#00FFCC]" />
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                  Simpan Layout Jadi Preset
+                  Simpan Layout Kanvas ke Preset
                 </h3>
               </div>
               <button
@@ -735,26 +789,101 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
               </button>
             </div>
 
-            <p className="text-xs text-[#888888] leading-relaxed">
-              Preset ini akan menyimpan posisi layer, crop shape, border, bayangan, dan latar kanvas saat ini agar dapat langsung diterapkan ke video atau klip lainnya.
-            </p>
+            {/* Segmented Mode: Timpa Preset Lama vs Buat Preset Baru */}
+            {customPresets.length > 0 && (
+              <div className="flex border border-[#2E2E2E] bg-black p-0.5 rounded">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPresetSaveMode("overwrite");
+                    const target = customPresets.find((p) => p.id === selectedPresetIdForOverwrite) || customPresets[0];
+                    if (target) {
+                      setSelectedPresetIdForOverwrite(target.id);
+                      setPresetNameInput(target.name);
+                    }
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${
+                    presetSaveMode === "overwrite"
+                      ? "bg-[#00FFCC] text-black shadow-sm"
+                      : "text-[#888888] hover:text-white"
+                  }`}
+                >
+                  Timpa Preset Lama ({customPresets.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPresetSaveMode("new");
+                    setPresetNameInput("");
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${
+                    presetSaveMode === "new"
+                      ? "bg-[#00FFCC] text-black shadow-sm"
+                      : "text-[#888888] hover:text-white"
+                  }`}
+                >
+                  + Preset Baru
+                </button>
+              </div>
+            )}
 
-            <div>
-              <label className="text-[11px] text-[#AAAAAA] uppercase block mb-1.5">
-                Nama Preset
-              </label>
-              <input
-                type="text"
-                autoFocus
-                placeholder="Misal: Apex Vertical 2-Cam / Facecam Top"
-                value={presetNameInput}
-                onChange={(e) => setPresetNameInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleConfirmSavePreset();
-                }}
-                className="w-full bg-black border border-[#3A3A3A] focus:border-[#00FFCC] rounded px-3 py-2 text-white text-xs outline-none"
-              />
-            </div>
+            {presetSaveMode === "overwrite" ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[11px] text-[#AAAAAA] uppercase font-bold tracking-wider block mb-1.5">
+                    Pilih Preset yang Ingin Ditimpa
+                  </label>
+                  <select
+                    value={selectedPresetIdForOverwrite}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      setSelectedPresetIdForOverwrite(newId);
+                      const p = customPresets.find((item) => item.id === newId);
+                      if (p) setPresetNameInput(p.name);
+                    }}
+                    className="w-full bg-black border border-[#3A3A3A] focus:border-[#00FFCC] rounded px-3 py-2 text-white text-xs outline-none"
+                  >
+                    {customPresets.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.scene?.layers?.length || 0} cut)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-[#AAAAAA] uppercase font-bold tracking-wider block mb-1.5">
+                    Nama Preset (Opsional Ubah)
+                  </label>
+                  <input
+                    type="text"
+                    value={presetNameInput}
+                    onChange={(e) => setPresetNameInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleConfirmSavePreset();
+                    }}
+                    className="w-full bg-black border border-[#3A3A3A] focus:border-[#00FFCC] rounded px-3 py-2 text-white text-xs outline-none"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="text-[11px] text-[#AAAAAA] uppercase font-bold tracking-wider block mb-1.5">
+                  Nama Preset Baru
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Misal: Apex Vertical 2-Cam / Facecam Top"
+                  value={presetNameInput}
+                  onChange={(e) => setPresetNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleConfirmSavePreset();
+                  }}
+                  className="w-full bg-black border border-[#3A3A3A] focus:border-[#00FFCC] rounded px-3 py-2 text-white text-xs outline-none"
+                />
+              </div>
+            )}
 
             <div className="text-[10px] text-[#666666]">
               Ringkasan: {scene?.layers.length || 0} layer potongan | Latar: {scene?.background.type || "blur_source"}
@@ -769,7 +898,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
               </button>
               <button
                 onClick={handleConfirmSavePreset}
-                disabled={isSavingPreset || !presetNameInput.trim()}
+                disabled={isSavingPreset || (presetSaveMode === "new" && !presetNameInput.trim())}
                 className="px-4 py-1.5 text-xs bg-[#00FFCC] hover:bg-[#00E5B8] disabled:opacity-40 text-black font-semibold rounded shadow flex items-center gap-1.5 transition"
               >
                 {isSavingPreset ? (
@@ -779,8 +908,10 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
                   </>
                 ) : (
                   <>
-                    <Sparkles size={13} />
-                    <span>Simpan Preset</span>
+                    <Save size={13} />
+                    <span>
+                      {presetSaveMode === "overwrite" ? "Timpa Preset Ini" : "Simpan Preset Baru"}
+                    </span>
                   </>
                 )}
               </button>

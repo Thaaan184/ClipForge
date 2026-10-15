@@ -63,7 +63,24 @@ async def test_scene_presets_lifecycle():
         assert found["name"] == "Apex Pro Vertical"
         assert len(found["scene"]["layers"]) == 1
 
-        # 4. Delete preset
+        # 4. Update existing preset
+        update_res = await client.put(
+            f"/api/presets/scenes/{preset_id}",
+            json={
+                "name": "Apex Pro Vertical Updated",
+                "scene": {
+                    **valid_scene,
+                    "background": {"type": "blur_source", "blur_sigma": 30},
+                },
+            },
+        )
+        assert update_res.status_code == 200
+        updated = update_res.json()
+        assert updated["id"] == preset_id
+        assert updated["name"] == "Apex Pro Vertical Updated"
+        assert updated["scene"]["background"]["type"] == "blur_source"
+
+        # 5. Delete preset
         del_res = await client.delete(f"/api/presets/scenes/{preset_id}")
         assert del_res.status_code == 200
         assert del_res.json()["status"] == "deleted"

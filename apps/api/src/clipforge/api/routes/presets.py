@@ -19,6 +19,11 @@ class CreateScenePresetRequest(BaseModel):
     scene: SceneGraph
 
 
+class UpdateScenePresetRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    scene: SceneGraph
+
+
 class ScenePresetResponse(BaseModel):
     id: str
     name: str
@@ -72,6 +77,41 @@ async def create_scene_preset(
         "name": req.name.strip(),
         "scene": req.scene.model_dump(),
         "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+
+@router.put("/scenes/{preset_id}", response_model=ScenePresetResponse, status_code=status.HTTP_200_OK)
+async def update_scene_preset(
+    preset_id: str,
+    req: UpdateScenePresetRequest,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Update an existing reusable scene graph preset (overwrites scene layout, optional name change)."""
+    async with db.execute(
+        "SELECT id, name, created_at FROM scene_presets WHERE id = ?", (preset_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Preset not found")
+        existing_name = row[1]
+        created_at = row[2]
+
+    now_iso = datetime.now(UTC).isoformat()
+    new_name = req.name.strip() if req.name else existing_name
+    scene_json = req.scene.model_dump_json()
+
+    await db.execute(
+        """UPDATE scene_presets SET name = ?, scene_json = ?, updated_at = ? WHERE id = ?""",
+        (new_name, scene_json, now_iso, preset_id),
+    )
+    await db.commit()
+
+    return {
+        "id": preset_id,
+        "name": new_name,
+        "scene": req.scene.model_dump(),
+        "created_at": created_at,
         "updated_at": now_iso,
     }
 
