@@ -79,6 +79,8 @@ export interface Candidate {
   flags: string[];
   status: "proposed" | "kept" | "rejected" | "rendered";
   render_mode?: "preset" | "freeform";
+  has_scene?: boolean;
+  scene_layer_count?: number;
   scene_graph?: SceneGraph | null;
 }
 

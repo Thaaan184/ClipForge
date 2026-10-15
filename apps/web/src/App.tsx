@@ -19,11 +19,13 @@ import {
   listJobs,
   triggerRender,
   updateCandidate,
+  updateCandidateRenderMode,
 } from "./api";
 import { AddManualClipModal } from "./components/AddManualClipModal";
 import { CandidateCard } from "./components/CandidateCard";
 import { ClipPlayer } from "./components/ClipPlayer";
 import { EvaluationView } from "./components/EvaluationView";
+import { FreeformStudio } from "./components/freeform/FreeformStudio";
 import { JobForm } from "./components/JobForm";
 import { ProgressTracker } from "./components/ProgressTracker";
 import { SubtitleEditor } from "./components/SubtitleEditor";
@@ -117,6 +119,9 @@ export default function App(): JSX.Element {
   // Modal for adding manual clips to existing project
   const [showAddClipModal, setShowAddClipModal] = useState(false);
   const [modalTargetJob, setModalTargetJob] = useState<Job | null>(null);
+
+  // Modal for Freeform Canvas Studio
+  const [studioCandidate, setStudioCandidate] = useState<Candidate | null>(null);
 
   // Render configuration for candidate processing
   const [renderSubtitleStyle, setRenderSubtitleStyle] = useState<string>("classic_white");
@@ -547,13 +552,53 @@ export default function App(): JSX.Element {
     }
   };
 
+  const handleToggleRenderMode = async (candId: string, mode: "preset" | "freeform") => {
+    try {
+      await updateCandidateRenderMode(candId, mode);
+      setCandidates((prev) =>
+        prev.map((c) => (c.id === candId ? { ...c, render_mode: mode } : c))
+      );
+      showToast(`Mode render kandidat diubah ke ${mode === "freeform" ? "KANVAS BEBAS" : "PRESET"}`);
+    } catch (err) {
+      showToast(`Gagal mengubah mode render: ${err}`);
+    }
+  };
+
+  const handleStudioSaved = (candId: string, scene: any) => {
+    setCandidates((prev) =>
+      prev.map((c) =>
+        c.id === candId
+          ? {
+              ...c,
+              render_mode: "freeform",
+              has_scene: true,
+              scene_layer_count: scene.layers?.length || 1,
+            }
+          : c
+      )
+    );
+  };
+
   const handleTriggerRender = async () => {
     if (!currentJob) return;
+
+    const kept = candidates.filter((c) => c.status === "kept");
+    const unrejected = candidates.filter((c) => c.status !== "rejected");
+    const targetCands = kept.length > 0 ? kept : unrejected;
+
+    // Check if any candidate has freeform mode without an edited scene
+    const uneditedFreeform = targetCands.filter(
+      (c) => c.render_mode === "freeform" && !c.has_scene
+    );
+    if (uneditedFreeform.length > 0) {
+      const proceed = window.confirm(
+        `Perhatian: Ada ${uneditedFreeform.length} kandidat dengan mode KANVAS yang belum diedit di Studio Kanvas.\nKandidat tersebut akan dilewati pada render batch ini.\n\nLanjutkan render kandidat lainnya?`
+      );
+      if (!proceed) return;
+    }
+
     setIsRendering(true);
     try {
-      const kept = candidates.filter((c) => c.status === "kept");
-      const unrejected = candidates.filter((c) => c.status !== "rejected");
-      const targetCands = kept.length > 0 ? kept : unrejected;
       const candIds = targetCands.length > 0 ? targetCands.map((c) => c.id) : undefined;
 
       await triggerRender(currentJob.id, {
@@ -1099,6 +1144,8 @@ export default function App(): JSX.Element {
                           onSelect={() => setSelectedCandId(cand.id)}
                           onUpdateStatus={(st) => handleUpdateStatus(cand.id, st)}
                           onUpdateTiming={(s, e) => handleUpdateTiming(cand.id, s, e)}
+                          onOpenStudio={() => setStudioCandidate(cand)}
+                          onToggleRenderMode={(mode) => handleToggleRenderMode(cand.id, mode)}
                         />
                       ))}
                     </div>
@@ -1471,6 +1518,19 @@ export default function App(): JSX.Element {
           }}
           onSubmit={handleAddManualClipsToExistingJob}
           loading={loading}
+        />
+      )}
+
+      {/* Fullscreen Modal: Freeform Canvas Studio */}
+      {studioCandidate && currentJob && (
+        <FreeformStudio
+          jobId={currentJob.id}
+          candidateId={studioCandidate.id}
+          candidateTitle={studioCandidate.title || `Highlight #${studioCandidate.rank}`}
+          clipStart={studioCandidate.user_start_s ?? studioCandidate.start_s}
+          clipEnd={studioCandidate.user_end_s ?? studioCandidate.end_s}
+          onClose={() => setStudioCandidate(null)}
+          onSaved={(scene) => handleStudioSaved(studioCandidate.id, scene)}
         />
       )}
 
