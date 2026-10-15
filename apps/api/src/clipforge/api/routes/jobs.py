@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import shutil
+import subprocess
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -10,7 +12,7 @@ from urllib.parse import urlparse
 
 import aiosqlite
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from clipforge.core.config import settings
@@ -39,6 +41,7 @@ from clipforge.jobs.pipeline import (
     stage_validate,
 )
 from clipforge.jobs.state_machine import transition_job_status
+from clipforge.render.scene.compiler import FFmpegSceneCompiler
 from clipforge.render.scene.legacy import legacy_reframe_to_scene
 from clipforge.render.scene.schema import SceneGraph
 from clipforge.timeline.models import CandidatesResponse, TimelineResponse
@@ -1104,6 +1107,132 @@ async def save_candidate_scene(
     await db.commit()
 
     return scene.model_dump()
+
+
+class PreviewFrameRequest(BaseModel):
+    t: float = 0.0
+
+
+@router.post("/candidates/{candidate_id}/scene/preview-frame")
+async def preview_candidate_scene_frame(
+    candidate_id: str,
+    req: PreviewFrameRequest | None = None,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> FileResponse:
+    """Render a single 1080x1920 PNG frame from scene graph for visual verification and parity tests."""
+    async with db.execute(
+        """SELECT c.id, c.job_id, c.start_s, c.end_s, c.user_start_s, c.user_end_s,
+                  j.source_url, j.params_json, sg.scene_json
+           FROM candidates c
+           JOIN jobs j ON c.job_id = j.id
+           LEFT JOIN scene_graphs sg ON c.id = sg.candidate_id
+           WHERE c.id = ?""",
+        (candidate_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+    (
+        c_id,
+        job_id,
+        start_s,
+        end_s,
+        u_start,
+        u_end,
+        source_url,
+        params_json_str,
+        scene_json,
+    ) = row
+
+    actual_start = u_start if u_start is not None else start_s
+    actual_end = u_end if u_end is not None else end_s
+    time_offset = req.t if req else 0.0
+
+    if scene_json:
+        scene = SceneGraph.model_validate_json(scene_json)
+    else:
+        params: dict[str, Any] = {}
+        if params_json_str:
+            try:
+                params = json.loads(params_json_str)
+            except Exception:
+                params = {}
+        scene = legacy_reframe_to_scene(
+            mode=params.get("reframe_mode", "blur"),
+            source_dims=(1920, 1080),
+            subtitle_cfg={
+                "preset": params.get("subtitle_style", "classic_white"),
+                "position": params.get("subtitle_position", "bottom"),
+            },
+            start_s=actual_start,
+            end_s=actual_end,
+        )
+
+    # Prepare or find segment video
+    seg_info = await prepare_segment(
+        source_url=source_url,
+        start_s=actual_start,
+        end_s=actual_end,
+        job_id=job_id,
+        cookies_path=settings.cookies_file,
+    )
+    seg_dir = settings.data_dir / "segments" / seg_info["segment_id"]
+    source_media = seg_dir / "full.mp4"
+    if not source_media.exists():
+        source_media = seg_dir / "proxy.mp4"
+    if not source_media.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Segment video source not ready for preview frame",
+        )
+
+    preview_dir = settings.data_dir / "preview_frames" / candidate_id
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    out_png = preview_dir / f"frame_{int(time_offset * 1000)}.png"
+
+    compiler = FFmpegSceneCompiler()
+    compiled = compiler.compile(
+        scene=scene,
+        source_video=source_media,
+        work_dir=preview_dir / "_tmp",
+        duration_s=max(1.0, actual_end - actual_start),
+        fps=float(scene.canvas.fps),
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        f"{time_offset:.3f}",
+        *compiled.input_args,
+        "-filter_complex",
+        compiled.filter_complex,
+        *compiled.map_args,
+        "-vframes",
+        "1",
+        "-loglevel",
+        "error",
+        str(out_png),
+    ]
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True)
+        if proc.returncode != 0:
+            err = proc.stderr.decode("utf-8", errors="replace")
+            raise HTTPException(
+                status_code=500, detail=f"Preview frame render failed: {err[:300]}"
+            )
+    finally:
+        for a in compiled.temp_assets:
+            try:
+                if a.exists():
+                    a.unlink()
+            except Exception:
+                pass
+        shutil.rmtree(preview_dir / "_tmp", ignore_errors=True)
+
+    return FileResponse(path=str(out_png), media_type="image/png")
 
 
 class TriggerRenderRequest(BaseModel):

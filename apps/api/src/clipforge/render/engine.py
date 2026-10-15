@@ -12,6 +12,8 @@ from clipforge.core.config import settings
 from clipforge.qa.inspector import run_clip_qa
 from clipforge.render.loudnorm import build_loudnorm_af, measure_loudnorm_pass1
 from clipforge.render.reframe import build_reframe_filtergraph
+from clipforge.render.scene.compiler import FFmpegSceneCompiler
+from clipforge.render.scene.schema import SceneGraph
 from clipforge.render.thumbnail import extract_thumbnail
 
 logger = structlog.get_logger(__name__)
@@ -48,9 +50,10 @@ def render_single_clip(
     expected_duration_s: float | None = None,
     game_roi: tuple[float, float, float, float] | None = None,
     face_roi: tuple[float, float, float, float] | None = None,
+    scene_graph: SceneGraph | None = None,
 ) -> dict[str, Any]:
     """
-    Render a single 9:16 clip from raw.mp4 + optional subs.ass.
+    Render a single 9:16 clip from raw.mp4 + optional subs.ass or SceneGraph.
     Guarantees:
       - OFL fonts bundled into clip_dir/fonts
       - Loudnorm pass 2 applied
@@ -84,66 +87,128 @@ def render_single_clip(
     measured = measure_loudnorm_pass1(raw_video)
     af_filter = build_loudnorm_af(measured)
 
-    # 3. Build filtergraph using relative paths for cwd execution
-    filtergraph = build_reframe_filtergraph(
-        mode=mode,
-        ass_file="subs.ass" if has_ass else None,
-        fonts_dir="fonts",
-        game_roi=game_roi,
-        face_roi=face_roi,
-    )
-
     encoder = settings.ffmpeg_encoder if settings.ffmpeg_encoder != "auto" else "libx264"
+    scene_tmp_dir = clip_dir / "_scene_tmp"
+    temp_assets_to_clean: list[Path] = []
 
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(raw_video.name),
-        "-filter_complex",
-        filtergraph,
-        "-map",
-        "[v]",
-        "-map",
-        "0:a",
-        "-af",
-        af_filter,
-        "-r",
-        str(fps),
-        "-c:v",
-        encoder,
-        "-crf",
-        "18",
-        "-preset",
-        "veryfast",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-ar",
-        "48000",
-        "-movflags",
-        "+faststart",
-        "-loglevel",
-        "error",
-        "final.mp4",
-    ]
+    try:
+        if scene_graph:
+            # Freeform Canvas Scene Graph pipeline
+            compiler = FFmpegSceneCompiler()
+            compiled = compiler.compile(
+                scene=scene_graph,
+                source_video=raw_video,
+                work_dir=scene_tmp_dir,
+                ass_path=local_ass if has_ass else None,
+                duration_s=expected_duration_s or 60.0,
+                fps=float(fps),
+                fonts_dir=fonts_dir,
+            )
+            temp_assets_to_clean.extend(compiled.temp_assets)
 
-    logger.info("starting_ffmpeg_render", clip_dir=str(clip_dir), mode=mode)
-    proc = subprocess.run(cmd, cwd=str(clip_dir), capture_output=True)
-    if proc.returncode != 0:
-        err_msg = proc.stderr.decode("utf-8", errors="replace")
-        logger.error("ffmpeg_render_failed", stderr=err_msg[:500])
-        qa_res = {"passed": False, "errors": [f"FFmpeg render failed: {err_msg[:300]}"]}
-        qa_json_path.write_text(json.dumps(qa_res, indent=2), encoding="utf-8")
-        return {
-            "success": False,
-            "final_path": None,
-            "thumb_path": None,
-            "qa": qa_res,
-        }
+            cmd = [
+                "ffmpeg",
+                "-y",
+                *compiled.input_args,
+                "-filter_complex",
+                compiled.filter_complex,
+                *compiled.map_args,
+                "-af",
+                af_filter,
+                "-r",
+                str(fps),
+                "-c:v",
+                encoder,
+                "-crf",
+                "18",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-ar",
+                "48000",
+                "-movflags",
+                "+faststart",
+                "-loglevel",
+                "error",
+                str(final_mp4),
+            ]
+        else:
+            # Legacy preset reframe pipeline
+            filtergraph = build_reframe_filtergraph(
+                mode=mode,
+                ass_file="subs.ass" if has_ass else None,
+                fonts_dir="fonts",
+                game_roi=game_roi,
+                face_roi=face_roi,
+            )
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(raw_video.name),
+                "-filter_complex",
+                filtergraph,
+                "-map",
+                "[v]",
+                "-map",
+                "0:a",
+                "-af",
+                af_filter,
+                "-r",
+                str(fps),
+                "-c:v",
+                encoder,
+                "-crf",
+                "18",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-ar",
+                "48000",
+                "-movflags",
+                "+faststart",
+                "-loglevel",
+                "error",
+                "final.mp4",
+            ]
+
+        logger.info(
+            "starting_ffmpeg_render",
+            clip_dir=str(clip_dir),
+            mode=mode if not scene_graph else "freeform",
+        )
+        proc = subprocess.run(cmd, cwd=str(clip_dir), capture_output=True)
+        if proc.returncode != 0:
+            err_msg = proc.stderr.decode("utf-8", errors="replace")
+            logger.error("ffmpeg_render_failed", stderr=err_msg[:500])
+            qa_res = {"passed": False, "errors": [f"FFmpeg render failed: {err_msg[:300]}"]}
+            qa_json_path.write_text(json.dumps(qa_res, indent=2), encoding="utf-8")
+            return {
+                "success": False,
+                "final_path": None,
+                "thumb_path": None,
+                "qa": qa_res,
+            }
+    finally:
+        # Guarantee no temporary mask/ring/shadow files remain after render
+        for asset in temp_assets_to_clean:
+            try:
+                if asset.exists():
+                    asset.unlink()
+            except Exception:
+                pass
+        if scene_tmp_dir.exists():
+            shutil.rmtree(scene_tmp_dir, ignore_errors=True)
 
     # 4. Generate thumbnail
     thumb_time = (expected_duration_s or 5.0) / 2.0
