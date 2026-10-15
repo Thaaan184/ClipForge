@@ -259,3 +259,11 @@ export interface SceneGraph {
   layers: LayerConfig[];
   subtitles: SubtitlesConfig;
 }
+
+export interface ScenePreset {
+  id: string;
+  name: string;
+  scene: SceneGraph;
+  created_at: string;
+  updated_at: string;
+}

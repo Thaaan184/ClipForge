@@ -149,19 +149,23 @@ class SceneGraph(StrictBase):
 
         # 4. Validate layers against sources & clamp bounds
         for layer in self.layers:
+            # Map frontend alias 'source_main' to primary source if needed
+            if layer.source_id == "source_main" and "source_main" not in source_map and self.sources:
+                layer.source_id = self.sources[0].id
+
             src = source_map.get(layer.source_id)
             if not src:
                 raise ValueError(
                     f"Layer '{layer.id}' references unknown source_id '{layer.source_id}'"
                 )
 
-            # Validate bbox within source dimensions (tolerance 1px for floating inaccuracies)
+            # Validate bbox within source dimensions (tolerance 2px for floating inaccuracies)
             bbox = layer.shape.bbox
             if (
-                bbox.x < -0.01
-                or bbox.y < -0.01
-                or (bbox.x + bbox.w) > (src.width + 1.0)
-                or (bbox.y + bbox.h) > (src.height + 1.0)
+                bbox.x < -2.0
+                or bbox.y < -2.0
+                or (bbox.x + bbox.w) > (src.width + 2.0)
+                or (bbox.y + bbox.h) > (src.height + 2.0)
             ):
                 raise ValueError(
                     f"Layer '{layer.id}' shape bbox ({bbox.x}, {bbox.y}, {bbox.w}, {bbox.h}) "
@@ -171,7 +175,7 @@ class SceneGraph(StrictBase):
             # Validate lasso points within source dimensions
             if layer.shape.type == "lasso" and layer.shape.points:
                 for px, py in layer.shape.points:
-                    if px < -0.01 or px > (src.width + 1.0) or py < -0.01 or py > (src.height + 1.0):
+                    if px < -2.0 or px > (src.width + 2.0) or py < -2.0 or py > (src.height + 2.0):
                         raise ValueError(
                             f"Lasso point ({px}, {py}) exceeds source dimensions ({src.width}x{src.height})"
                         )

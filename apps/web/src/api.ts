@@ -6,6 +6,7 @@ import {
   JobParams,
   ManualClipSegment,
   SceneGraph,
+  ScenePreset,
   SubtitleTrack,
   SubtitleWord,
   TimelineData,
@@ -413,10 +414,58 @@ export async function saveCandidateScene(
     body: JSON.stringify(scene),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: "Failed to save scene" }));
-    throw new Error(err.detail || `HTTP ${res.status}`);
+    let msg = `Gagal menyimpan kanvas (HTTP ${res.status})`;
+    try {
+      const err = await res.json();
+      if (typeof err.detail === "string") {
+        msg = err.detail;
+      } else if (Array.isArray(err.detail)) {
+        msg = err.detail.map((d: any) => `${d.loc?.slice(-1)[0] || "field"}: ${d.msg}`).join("; ");
+      } else if (err.detail) {
+        msg = JSON.stringify(err.detail);
+      }
+    } catch {}
+    throw new Error(msg);
   }
   return res.json();
+}
+
+export async function getScenePresets(): Promise<ScenePreset[]> {
+  const res = await fetch(`${API_BASE}/api/presets/scenes`);
+  if (!res.ok) {
+    throw new Error("Gagal mengambil daftar preset kanvas");
+  }
+  return res.json();
+}
+
+export async function createScenePreset(
+  name: string,
+  scene: SceneGraph
+): Promise<ScenePreset> {
+  const res = await fetch(`${API_BASE}/api/presets/scenes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, scene }),
+  });
+  if (!res.ok) {
+    let msg = `Gagal membuat preset (HTTP ${res.status})`;
+    try {
+      const err = await res.json();
+      if (typeof err.detail === "string") msg = err.detail;
+      else if (Array.isArray(err.detail)) msg = err.detail.map((d: any) => d.msg).join("; ");
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+export async function deleteScenePreset(presetId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/presets/scenes/${presetId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error("Gagal menghapus preset");
+  }
 }
 
 export async function updateCandidateRenderMode(
