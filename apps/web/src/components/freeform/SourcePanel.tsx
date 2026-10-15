@@ -205,24 +205,22 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
   // Convert client coordinates (screen clientX/clientY) -> Source pixel space (0..sourceWidth, 0..sourceHeight)
   const clientToSource = useCallback(
     (clientX: number, clientY: number) => {
-      if (!containerRef.current || baseDims.width <= 0 || baseDims.height <= 0) {
+      const canvas = canvasRef.current;
+      if (!canvas || sourceWidth <= 0 || sourceHeight <= 0) {
         return { x: 0, y: 0 };
       }
-      const cRect = containerRef.current.getBoundingClientRect();
-      const mX = clientX - cRect.left;
-      const mY = clientY - cRect.top;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return { x: 0, y: 0 };
 
-      // Un-pan and un-zoom to base canvas space (0..baseDims)
-      const canvasX = (mX - pan.x) / zoom;
-      const canvasY = (mY - pan.y) / zoom;
+      const normX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const normY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
 
-      // Scale to original source dimensions (0..sourceWidth, 0..sourceHeight)
-      const srcX = Math.max(0, Math.min(sourceWidth, (canvasX / baseDims.width) * sourceWidth));
-      const srcY = Math.max(0, Math.min(sourceHeight, (canvasY / baseDims.height) * sourceHeight));
-
-      return { x: srcX, y: srcY };
+      return {
+        x: normX * sourceWidth,
+        y: normY * sourceHeight,
+      };
     },
-    [baseDims, pan, zoom, sourceWidth, sourceHeight]
+    [sourceWidth, sourceHeight]
   );
 
   // Video playback constraints
@@ -612,7 +610,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
       <div
         ref={containerRef}
         onWheel={handleWheel}
-        className="relative flex-1 bg-black flex items-center justify-center p-2 overflow-hidden"
+        className="relative flex-1 bg-black overflow-hidden"
       >
         <div
           className="relative shadow-lg"
@@ -630,7 +628,7 @@ export const SourcePanel: React.FC<SourcePanelProps> = ({
             muted
             loop
             onLoadedMetadata={updateBaseDims}
-            className="w-full h-full object-contain pointer-events-none block"
+            className="w-full h-full object-fill pointer-events-none block"
           />
 
           <canvas
