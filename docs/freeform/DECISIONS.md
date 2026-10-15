@@ -20,3 +20,13 @@ Dokumen ini mencatat keputusan desain teknis sederhana yang diambil selama imple
 
 5. **Penanganan Kandidat Belum Diedit**:
    - Jika kandidat Keep diatur ke mode Freeform tapi belum memiliki layer di scene graph, sistem tidak akan merendernya dan memunculkan peringatan eksplisit di UI (tidak fallback diam-diam ke preset).
+
+6. **Test Runner Frontend**:
+   - Menambahkan `vitest` (^2.1.0) ke `apps/web/package.json` untuk pengujian unit matematika transformasi afin matriks, inverse mapping, hit-testing polygon/ellipse/rect, Douglas-Peucker simplification, dan Zustand undo/redo stack.
+
+7. **Garansi Kebersihan Aset Sementara**:
+   - Direktori `_scene_tmp` dan seluruh file `mask.png`, `ring.png`, `shadow.png` dihapus pada blok `finally` di `engine.py`, baik saat proses render FFmpeg berhasil maupun gagal.
+
+8. **Paritas Resolusi Subtitle ASS (PlayRes)**:
+   - Header `PlayResX: 1080` dan `PlayResY: 1920` dipaksakan ke script ASS saat rendering layer kanvas bebas agar rendering font karaoke tidak mengecil saat di-burn ke output 9:16.
+
