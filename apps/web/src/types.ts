@@ -78,6 +78,8 @@ export interface Candidate {
   evidence: CandidateEvidence;
   flags: string[];
   status: "proposed" | "kept" | "rejected" | "rendered";
+  render_mode?: "preset" | "freeform";
+  scene_graph?: SceneGraph | null;
 }
 
 export interface SignalPoint {
@@ -151,4 +153,107 @@ export interface FinishedClip {
   subtitles_json?: string | null;
   created_at: string;
   updated_at: string;
+  scene_graph?: SceneGraph | null;
+}
+
+// -------------------------------------------------------------
+// Scene Graph v1.1 Definitions (Freeform Studio Single Source of Truth)
+// -------------------------------------------------------------
+
+export interface BBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export type Point2D = [number, number];
+
+export interface ShapeConfig {
+  type: "rect" | "ellipse" | "lasso";
+  bbox: BBox;
+  points?: Point2D[] | null;
+}
+
+export interface TransformConfig {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+  rotation: number;
+  lock_aspect: boolean;
+  z: number;
+}
+
+export interface ShadowConfig {
+  enabled: boolean;
+  color: string;
+  alpha: number;
+  blur: number;
+  offset_x: number;
+  offset_y: number;
+}
+
+export interface StyleConfig {
+  opacity: number;
+  corner_radius: number;
+  border_width: number;
+  border_color: string;
+  shadow: ShadowConfig;
+}
+
+export interface LayerConfig {
+  id: string;
+  name: string;
+  source_id: string;
+  visible: boolean;
+  locked: boolean;
+  time_offset: number;
+  shape: ShapeConfig;
+  transform: TransformConfig;
+  style: StyleConfig;
+}
+
+export interface SourceConfig {
+  id: string;
+  width: number;
+  height: number;
+  fps: number;
+  start: number;
+  end: number;
+  padding_before: number;
+}
+
+export interface GradientConfig {
+  angle: number;
+  stops: string[];
+}
+
+export interface BackgroundConfig {
+  type: "blur_source" | "solid" | "gradient" | "secondary_source";
+  blur_sigma: number;
+  color: string;
+  gradient?: GradientConfig | null;
+  secondary_source_id?: string | null;
+}
+
+export interface CanvasConfig {
+  width: number;
+  height: number;
+  fps: number;
+}
+
+export interface SubtitlesConfig {
+  enabled: boolean;
+  preset: string;
+  position: string;
+}
+
+export interface SceneGraph {
+  version: string;
+  canvas: CanvasConfig;
+  background: BackgroundConfig;
+  sources: SourceConfig[];
+  layers: LayerConfig[];
+  subtitles: SubtitlesConfig;
 }
