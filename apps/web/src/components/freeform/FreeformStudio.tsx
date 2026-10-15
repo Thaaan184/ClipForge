@@ -267,7 +267,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
         }
         await updateScenePreset(selectedPresetIdForOverwrite, scene, name || undefined);
         setLastAppliedPresetId(selectedPresetIdForOverwrite);
-        showNotification(`Preset "${name}" berhasil diperbarui (ditimpa)!`);
+        showNotification(`Preset "${name}" berhasil disimpan!`);
       } else {
         if (!name) {
           showNotification("Masukkan nama preset terlebih dahulu", "error");
@@ -287,18 +287,18 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
     }
   };
 
-  // Direct quick overwrite from dropdown
+  // Direct quick save from dropdown
   const handleQuickOverwritePreset = async (presetId: string, presetName: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!scene) return;
-    if (!confirm(`Timpa preset "${presetName}" dengan susunan kanvas saat ini?`)) return;
+    if (!confirm(`Simpan perubahan kanvas ke preset "${presetName}"?`)) return;
     try {
       await updateScenePreset(presetId, scene);
       setLastAppliedPresetId(presetId);
       await loadPresets();
-      showNotification(`Preset "${presetName}" berhasil ditimpa dengan kanvas saat ini!`);
+      showNotification(`Preset "${presetName}" berhasil disimpan!`);
     } catch (err: any) {
-      showNotification(err.message || "Gagal menimpa preset", "error");
+      showNotification(err.message || "Gagal menyimpan preset", "error");
     }
   };
 
@@ -630,7 +630,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
                           <button
                             type="button"
                             onClick={(e) => handleQuickOverwritePreset(p.id, p.name, e)}
-                            title="Timpa preset ini dengan kanvas sekarang"
+                            title="Simpan perubahan ke preset ini"
                             className="opacity-0 group-hover:opacity-100 p-1 text-[#888888] hover:text-[#00FFCC] transition"
                           >
                             <Save size={12} />
@@ -789,9 +789,23 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
               </button>
             </div>
 
-            {/* Segmented Mode: Timpa Preset Lama vs Buat Preset Baru */}
+            {/* Segmented Mode: Simpan Baru vs Simpan Sebagai */}
             {customPresets.length > 0 && (
               <div className="flex border border-[#2E2E2E] bg-black p-0.5 rounded">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPresetSaveMode("new");
+                    setPresetNameInput("");
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${
+                    presetSaveMode === "new"
+                      ? "bg-[#00FFCC] text-black shadow-sm"
+                      : "text-[#888888] hover:text-white"
+                  }`}
+                >
+                  Simpan Baru
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -808,21 +822,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
                       : "text-[#888888] hover:text-white"
                   }`}
                 >
-                  Timpa Preset Lama ({customPresets.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPresetSaveMode("new");
-                    setPresetNameInput("");
-                  }}
-                  className={`flex-1 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${
-                    presetSaveMode === "new"
-                      ? "bg-[#00FFCC] text-black shadow-sm"
-                      : "text-[#888888] hover:text-white"
-                  }`}
-                >
-                  + Preset Baru
+                  Simpan Sebagai ({customPresets.length})
                 </button>
               </div>
             )}
@@ -831,7 +831,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
               <div className="space-y-3">
                 <div>
                   <label className="text-[11px] text-[#AAAAAA] uppercase font-bold tracking-wider block mb-1.5">
-                    Pilih Preset yang Ingin Ditimpa
+                    Pilih Preset Tujuan
                   </label>
                   <select
                     value={selectedPresetIdForOverwrite}
@@ -853,7 +853,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
 
                 <div>
                   <label className="text-[11px] text-[#AAAAAA] uppercase font-bold tracking-wider block mb-1.5">
-                    Nama Preset (Opsional Ubah)
+                    Nama Preset
                   </label>
                   <input
                     type="text"
@@ -910,7 +910,7 @@ export const FreeformStudio: React.FC<FreeformStudioProps> = ({
                   <>
                     <Save size={13} />
                     <span>
-                      {presetSaveMode === "overwrite" ? "Timpa Preset Ini" : "Simpan Preset Baru"}
+                      {presetSaveMode === "overwrite" ? "Simpan Sebagai" : "Simpan Baru"}
                     </span>
                   </>
                 )}
