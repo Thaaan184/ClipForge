@@ -554,10 +554,10 @@ async def create_manual_job(
         await db.execute(
             """
             INSERT INTO candidates (
-                id, job_id, rank, start_s, end_s, title, category,
+                id, job_id, rank, start_s, end_s, peak_s, title, category,
                 status, final_score, hook_text, evidence_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'manual', 'kept', ?, ?, '{}')
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', 'kept', ?, ?, '{}')
             """,
             (
                 cand_id,
@@ -565,6 +565,7 @@ async def create_manual_job(
                 idx + 1,
                 c_start,
                 c_end,
+                c_start,
                 c_title,
                 round(0.99 - (idx * 0.01), 3),
                 c_title,
@@ -634,10 +635,10 @@ async def add_manual_clips_to_job(
         await db.execute(
             """
             INSERT INTO candidates (
-                id, job_id, rank, start_s, end_s, title, category,
+                id, job_id, rank, start_s, end_s, peak_s, title, category,
                 status, final_score, hook_text, evidence_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'manual', 'kept', ?, ?, '{}')
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', 'kept', ?, ?, '{}')
             """,
             (
                 cand_id,
@@ -645,6 +646,7 @@ async def add_manual_clips_to_job(
                 base_rank + idx + 1,
                 c_start,
                 c_end,
+                c_start,
                 c_title,
                 round(0.99 - (idx * 0.01), 3),
                 c_title,
