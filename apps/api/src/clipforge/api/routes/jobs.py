@@ -26,7 +26,6 @@ from clipforge.jobs.models import (
     JobResponse,
     JobStatus,
     ManualClipCreateRequest,
-    ManualClipItem,
     StageName,
 )
 from clipforge.jobs.pipeline import (
@@ -156,6 +155,7 @@ async def _execute_manual_clips_batch(
     - Renders 9:16 vertical video and registers clip in DB.
     """
     from pathlib import Path
+
     from clipforge.api.routes.clips import sync_finished_clip
     from clipforge.asr.whisper import transcribe_clip_media
     from clipforge.db.connection import get_db_connection
@@ -178,7 +178,7 @@ async def _execute_manual_clips_batch(
                 row = await cur.fetchone()
                 if not row:
                     return
-                source_url, genre, language, cur_title, cur_video_id = row[0], row[1], row[2], row[3], row[4]
+                source_url, _genre, language, cur_title, cur_video_id = row[0], row[1], row[2], row[3], row[4]
 
             # Fast metadata probe if title or video_id missing
             video_id = cur_video_id
@@ -471,7 +471,7 @@ async def create_manual_job(
                 start_s = parse_timestamp_to_seconds(item.start_time)
                 end_s = parse_timestamp_to_seconds(item.end_time)
             except ValueError as ve:
-                raise HTTPException(status_code=400, detail=str(ve))
+                raise HTTPException(status_code=400, detail=str(ve)) from ve
             if start_s < 0:
                 raise HTTPException(status_code=400, detail="Start time must be >= 0")
             if end_s <= start_s:
@@ -484,7 +484,7 @@ async def create_manual_job(
             start_s = parse_timestamp_to_seconds(req.start_time)
             end_s = parse_timestamp_to_seconds(req.end_time)
         except ValueError as ve:
-            raise HTTPException(status_code=400, detail=str(ve))
+            raise HTTPException(status_code=400, detail=str(ve)) from ve
         if start_s < 0:
             raise HTTPException(status_code=400, detail="Start time must be >= 0")
         if end_s <= start_s:
@@ -617,7 +617,7 @@ async def add_manual_clips_to_job(
             start_s = parse_timestamp_to_seconds(item.start_time)
             end_s = parse_timestamp_to_seconds(item.end_time)
         except ValueError as ve:
-            raise HTTPException(status_code=400, detail=str(ve))
+            raise HTTPException(status_code=400, detail=str(ve)) from ve
         if start_s < 0:
             raise HTTPException(status_code=400, detail="Start time must be >= 0")
         if end_s <= start_s:

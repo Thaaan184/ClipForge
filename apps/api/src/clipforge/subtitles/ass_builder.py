@@ -38,7 +38,7 @@ def load_style_preset(preset_name: str = "classic_white") -> SubtitleStylePreset
 
 
 # Consistent speaker color palette in ASS format (&HAABBGGRR&)
-SPEAKER_PALETTE = [
+SPEAKER_PALETTE: list[str | None] = [
     None,            # Slot 0 / Speaker 1 -> style.primary_color
     "&H00008CFF&",   # Slot 1 / Speaker 2 -> Fire Orange (B:00, G:8C, R:FF)
     "&H00FFFF00&",   # Slot 2 / Speaker 3 -> Electric Cyan (B:FF, G:FF, R:00)
@@ -62,13 +62,13 @@ def get_speaker_color_mapping(
             if spk_lower in ("speaker_1", "spk_1", "spk1", "speaker1", "default"):
                 mapping[spk] = default_primary
             elif spk_lower in ("speaker_2", "spk_2", "spk2", "speaker2"):
-                mapping[spk] = SPEAKER_PALETTE[1]
+                mapping[spk] = SPEAKER_PALETTE[1] or default_primary
             elif spk_lower in ("speaker_3", "spk_3", "spk3", "speaker3"):
-                mapping[spk] = SPEAKER_PALETTE[2]
+                mapping[spk] = SPEAKER_PALETTE[2] or default_primary
             elif spk_lower in ("speaker_4", "spk_4", "spk4", "speaker4"):
-                mapping[spk] = SPEAKER_PALETTE[3]
+                mapping[spk] = SPEAKER_PALETTE[3] or default_primary
             elif spk_lower in ("speaker_5", "spk_5", "spk5", "speaker5"):
-                mapping[spk] = SPEAKER_PALETTE[4]
+                mapping[spk] = SPEAKER_PALETTE[4] or default_primary
             else:
                 color = SPEAKER_PALETTE[palette_idx % len(SPEAKER_PALETTE)]
                 mapping[spk] = color if color else default_primary
