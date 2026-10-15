@@ -1057,6 +1057,7 @@ export default function App(): JSX.Element {
                       </div>
                     )}
 
+                    {/* Header Title */}
                     <div className="flex items-center justify-between border-b border-line pb-3 flex-wrap gap-3">
                       <div>
                         <h3 className="font-extrabold text-base md:text-lg uppercase tracking-tight text-copy">
@@ -1066,63 +1067,79 @@ export default function App(): JSX.Element {
                           Pilih dan kurasi momen terbaik sebelum dibakar ke video 9:16 vertikal.
                         </p>
                       </div>
+                      <div className="text-xs font-mono text-muted">
+                        Klip Terpilih: <span className="font-bold text-action">{candidatesToRenderCount}</span> / {candidates.length}
+                      </div>
+                    </div>
 
-                      <div className="flex items-center gap-3 flex-wrap">
-                        {/* Preset Subtitle Selector */}
-                        <div className="flex items-center gap-2 bg-card border border-line px-3 py-2 text-xs">
-                          <span className="text-muted font-bold uppercase tracking-wider text-[11px]">Subtitle:</span>
-                          <select
-                            value={renderSubtitleStyle}
-                            onChange={(e) => setRenderSubtitleStyle(e.target.value)}
-                            disabled={isRendering || currentJob.status === "rendering"}
-                            className="bg-transparent text-copy text-xs font-semibold focus:outline-none cursor-pointer"
-                          >
-                            {SUBTITLE_PRESET_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                    {/* Slate Configuration Bar — Matches Home Page Layout */}
+                    <div className="p-4 md:p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 bg-card/40 border border-line text-xs">
+                      {/* Reframe Mode Selector */}
+                      <div>
+                        <label className="block text-muted uppercase font-bold tracking-wider mb-2 text-[11px]">
+                          Reframe 9:16
+                        </label>
+                        <select
+                          value={renderReframeMode}
+                          onChange={(e) => setRenderReframeMode(e.target.value)}
+                          disabled={isRendering || currentJob.status === "rendering"}
+                          className="w-full bg-bg border border-line py-2 px-3 text-copy text-xs focus:border-action focus:outline-none"
+                        >
+                          {REFRAME_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                        {/* Reframe Mode Selector */}
-                        <div className="flex items-center gap-2 bg-card border border-line px-3 py-2 text-xs">
-                          <span className="text-muted font-bold uppercase tracking-wider text-[11px]">Reframe:</span>
-                          <select
-                            value={renderReframeMode}
-                            onChange={(e) => setRenderReframeMode(e.target.value)}
-                            disabled={isRendering || currentJob.status === "rendering"}
-                            className="bg-transparent text-copy text-xs font-semibold focus:outline-none cursor-pointer"
-                          >
-                            {REFRAME_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                      {/* Preset Subtitle Selector */}
+                      <div>
+                        <label className="block text-muted uppercase font-bold tracking-wider mb-2 text-[11px]">
+                          Preset Subtitle
+                        </label>
+                        <select
+                          value={renderSubtitleStyle}
+                          onChange={(e) => setRenderSubtitleStyle(e.target.value)}
+                          disabled={isRendering || currentJob.status === "rendering"}
+                          className="w-full bg-bg border border-line py-2 px-3 text-copy text-xs focus:border-action focus:outline-none"
+                        >
+                          {SUBTITLE_PRESET_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                        {/* Subtitle Location Preset */}
-                        <div className="flex items-center gap-2 bg-card border border-line px-3 py-2 text-xs">
-                          <span className="text-muted font-bold uppercase tracking-wider text-[11px]">Lokasi:</span>
-                          <select
-                            value={renderSubtitlePosition}
-                            onChange={(e) => setRenderSubtitlePosition(e.target.value)}
-                            disabled={isRendering || currentJob.status === "rendering" || renderSubtitleStyle === "none"}
-                            className="bg-transparent text-copy text-xs font-semibold focus:outline-none cursor-pointer"
-                          >
-                            {SUBTITLE_POSITION_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                      {/* Subtitle Location Preset */}
+                      <div>
+                        <label className="block text-muted uppercase font-bold tracking-wider mb-2 text-[11px]">
+                          Lokasi Subtitle
+                        </label>
+                        <select
+                          value={renderSubtitlePosition}
+                          onChange={(e) => setRenderSubtitlePosition(e.target.value)}
+                          disabled={isRendering || currentJob.status === "rendering" || renderSubtitleStyle === "none"}
+                          className="w-full bg-bg border border-line py-2 px-3 text-copy text-xs focus:border-action focus:outline-none"
+                        >
+                          {SUBTITLE_POSITION_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
+                      {/* Primary Render Button */}
+                      <div className="flex flex-col justify-end">
+                        <label className="hidden lg:block text-muted uppercase font-bold tracking-wider mb-2 text-[11px]">
+                          Eksekusi Render
+                        </label>
                         <button
                           onClick={handleTriggerRender}
                           disabled={isRendering || currentJob.status === "rendering"}
-                          className="btn-action flex items-center gap-2 px-6 py-2.5 text-xs md:text-sm font-bold text-bg disabled:opacity-50"
+                          className="w-full py-2 px-4 bg-action text-bg font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.99] transition-all shadow-md disabled:opacity-50 h-[37px]"
                         >
                           {isRendering || currentJob.status === "rendering" ? (
                             <>
@@ -1132,9 +1149,7 @@ export default function App(): JSX.Element {
                           ) : (
                             <>
                               <Play className="w-4 h-4 fill-bg" />
-                              <span>
-                                RENDER KANDIDAT TERPILIH ({candidatesToRenderCount})
-                              </span>
+                              <span>RENDER ({candidatesToRenderCount} KLIP)</span>
                             </>
                           )}
                         </button>
