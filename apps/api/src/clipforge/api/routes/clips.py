@@ -1,6 +1,7 @@
 """API routes for clip retrieval, video streaming, subtitle editing, and WYSIWYG preview."""
 
 import json
+import os
 import shutil
 import uuid
 from datetime import UTC, datetime
@@ -867,10 +868,23 @@ async def rerender_clip(
         r_params["subtitle_position"] = payload.subtitle_position
     new_r_params_json = json.dumps(r_params)
 
+    # Sync editorial source with the newly rendered clip
+    ed_dst = clip_dir / "editorial_source.mp4"
+    if render_result.get("final_path") and Path(render_result["final_path"]).exists():
+        try:
+            if ed_dst.exists():
+                ed_dst.unlink()
+            os.link(render_result["final_path"], ed_dst)
+        except Exception:
+            try:
+                shutil.copy2(render_result["final_path"], ed_dst)
+            except Exception:
+                pass
+
     await db.execute(
         """
         UPDATE clips
-        SET status = ?, video_path = ?, thumb_path = ?, qa_json = ?, render_params_json = ?
+        SET status = ?, video_path = ?, thumb_path = ?, qa_json = ?, render_params_json = ?, editorial_source_path = ?
         WHERE id = ?
         """,
         (
@@ -879,10 +893,30 @@ async def rerender_clip(
             render_result["thumb_path"],
             json.dumps(render_result["qa"]),
             new_r_params_json,
+            str(ed_dst) if ed_dst.exists() else None,
             clip_id,
         ),
     )
     await db.commit()
+
+    # Sync active editorial session workspaces if any exist
+    try:
+        async with db.execute(
+            "SELECT workspace_dir FROM editorial_sessions WHERE clip_id = ?",
+            (clip_id,),
+        ) as es_cur:
+            es_rows = await es_cur.fetchall()
+            for (ws_path_str,) in es_rows:
+                if ws_path_str and Path(ws_path_str).exists() and render_result.get("final_path"):
+                    ws_src = Path(ws_path_str) / "public" / "clip_source.mp4"
+                    try:
+                        if ws_src.exists():
+                            ws_src.unlink()
+                        os.link(render_result["final_path"], ws_src)
+                    except Exception:
+                        shutil.copy2(render_result["final_path"], ws_src)
+    except Exception:
+        pass
 
     # Automatically persist final re-rendered clip into finished_clips repository
     await sync_finished_clip(db, clip_id)

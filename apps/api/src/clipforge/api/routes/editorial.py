@@ -83,6 +83,32 @@ async def create_editorial_session(
     ) as cur:
         existing = await cur.fetchone()
         if existing and Path(existing[5]).exists():
+            ws_dir = Path(existing[5])
+            # Keep workspace clip_source in exact sync with user's rendered clip
+            async with db.execute(
+                "SELECT video_path, editorial_source_path FROM clips WHERE id = ?",
+                (payload.clip_id,),
+            ) as v_cur:
+                v_row = await v_cur.fetchone()
+                if v_row:
+                    rendered_candidate = None
+                    if v_row[0] and Path(v_row[0]).exists():
+                        rendered_candidate = Path(v_row[0])
+                    elif v_row[1] and Path(v_row[1]).exists():
+                        rendered_candidate = Path(v_row[1])
+                    if rendered_candidate:
+                        ws_source = ws_dir / "public" / "clip_source.mp4"
+                        try:
+                            if not ws_source.exists() or (ws_source.stat().st_size != rendered_candidate.stat().st_size):
+                                if ws_source.exists():
+                                    ws_source.unlink()
+                                os.link(rendered_candidate, ws_source)
+                        except Exception:
+                            try:
+                                shutil.copy2(rendered_candidate, ws_source)
+                            except Exception:
+                                pass
+
             return EditorialSessionResponse(
                 id=existing[0],
                 clip_id=existing[1],
@@ -99,15 +125,30 @@ async def create_editorial_session(
 
     # Verify clip exists
     async with db.execute(
-        "SELECT id, editorial_source_path, video_path FROM clips WHERE id = ?",
+        "SELECT id, video_path, editorial_source_path FROM clips WHERE id = ?",
         (payload.clip_id,),
     ) as cur:
         row = await cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Clip not found")
-        clip_id, ed_path, v_path = row[0], row[1], row[2]
+        clip_id, v_path, ed_path = row[0], row[1], row[2]
 
-    source_path = Path(ed_path) if ed_path else (Path(v_path) if v_path else Path("missing.mp4"))
+    # Always use the exact rendered video produced by user in previous steps
+    source_path = None
+    if v_path and Path(v_path).exists():
+        source_path = Path(v_path)
+    else:
+        async with db.execute(
+            "SELECT video_path FROM finished_clips WHERE clip_id = ?",
+            (clip_id,),
+        ) as fc_cur:
+            fc_row = await fc_cur.fetchone()
+            if fc_row and fc_row[0] and Path(fc_row[0]).exists():
+                source_path = Path(fc_row[0])
+            elif ed_path and Path(ed_path).exists():
+                source_path = Path(ed_path)
+            else:
+                source_path = Path("missing.mp4")
     session_id = f"ed_{uuid.uuid4().hex[:12]}"
     now_iso = datetime.now(UTC).isoformat()
 
