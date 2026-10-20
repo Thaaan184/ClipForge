@@ -24,6 +24,7 @@ import {
 import { AddManualClipModal } from "./components/AddManualClipModal";
 import { CandidateCard } from "./components/CandidateCard";
 import { ClipPlayer } from "./components/ClipPlayer";
+import { EditorialStudio } from "./components/editorial/EditorialStudio";
 import { EvaluationView } from "./components/EvaluationView";
 import { FreeformStudio } from "./components/freeform/FreeformStudio";
 import { JobForm } from "./components/JobForm";
@@ -125,6 +126,9 @@ export default function App(): JSX.Element {
 
   // Modal for Freeform Canvas Studio
   const [studioCandidate, setStudioCandidate] = useState<Candidate | null>(null);
+
+  // Editorial Studio Clip State (v3 P3)
+  const [editorialClipId, setEditorialClipId] = useState<string | null>(null);
 
   // Render configuration for candidate processing
   const [renderSubtitleStyle, setRenderSubtitleStyle] = useState<string>("none");
@@ -1235,12 +1239,18 @@ export default function App(): JSX.Element {
             </div>
 
             {/* Editing Workspace */}
-            {activeClip ? (
+            {editorialClipId ? (
+              <EditorialStudio
+                clipId={editorialClipId}
+                onBack={() => setEditorialClipId(null)}
+              />
+            ) : activeClip ? (
               <div className="flex flex-col gap-8">
                 {/* 9:16 Video Player Card */}
                 <ClipPlayer
                   clip={activeClip}
                   onEditSubtitles={() => {}}
+                  onOpenEditorial={(id) => setEditorialClipId(id)}
                 />
 
                 {/* Subtitle & Preset Studio */}

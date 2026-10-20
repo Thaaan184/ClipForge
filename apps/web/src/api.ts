@@ -1,6 +1,11 @@
 import {
   Candidate,
   Clip,
+  EditorialAsset,
+  EditorialMessage,
+  EditorialSession,
+  EditorialStatus,
+  EditorialVersion,
   FinishedClip,
   Job,
   JobParams,
@@ -544,3 +549,185 @@ export async function requestEditorialSource(clipId: string, reframeMode = "blur
   }
   return res.json();
 }
+
+// ---------------------------------------------------------
+// Editorial Studio API Client (v3 P3)
+// ---------------------------------------------------------
+
+export async function createEditorialSession(
+  clipId: string,
+  stylePack = "gaming_hype"
+): Promise<EditorialSession> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clip_id: clipId, style_pack: stylePack }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal membuat sesi editorial untuk klip ${clipId}`);
+  }
+  return res.json();
+}
+
+export async function getEditorialSession(sessionId: string): Promise<EditorialSession> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal memuat sesi editorial ${sessionId}`);
+  }
+  return res.json();
+}
+
+export async function getEditorialStatus(sessionId: string): Promise<EditorialStatus> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/status`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal memeriksa status sesi editorial ${sessionId}`);
+  }
+  return res.json();
+}
+
+export async function listEditorialAssets(sessionId: string): Promise<EditorialAsset[]> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/assets`);
+  if (!res.ok) {
+    throw new Error(`Gagal memuat daftar aset sesi ${sessionId}`);
+  }
+  return res.json();
+}
+
+export async function uploadEditorialAsset(
+  sessionId: string,
+  file: File,
+  label = "",
+  hint = ""
+): Promise<EditorialAsset> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("label", label);
+  formData.append("hint", hint);
+
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/assets`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal mengunggah aset ${file.name}`);
+  }
+  return res.json();
+}
+
+export async function updateEditorialAsset(
+  sessionId: string,
+  assetId: string,
+  payload: { label?: string; hint?: string }
+): Promise<EditorialAsset> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/assets/${assetId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal memperbarui metadata aset ${assetId}`);
+  }
+  return res.json();
+}
+
+export async function deleteEditorialAsset(
+  sessionId: string,
+  assetId: string
+): Promise<{ success: boolean; asset_id: string }> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/assets/${assetId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal menghapus aset ${assetId}`);
+  }
+  return res.json();
+}
+
+export function getEditorialAssetFileUrl(sessionId: string, assetId: string): string {
+  return `${API_BASE}/api/editorial/sessions/${sessionId}/assets/${assetId}/file`;
+}
+
+export async function listEditorialVersions(sessionId: string): Promise<EditorialVersion[]> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/versions`);
+  if (!res.ok) {
+    throw new Error(`Gagal memuat riwayat versi sesi ${sessionId}`);
+  }
+  return res.json();
+}
+
+export async function restoreEditorialVersion(
+  sessionId: string,
+  versionNum: number
+): Promise<{ success: boolean; session_id: string; restored_version: number }> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/versions/${versionNum}/restore`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal me-restore versi ${versionNum}`);
+  }
+  return res.json();
+}
+
+export async function renderEditorialPreview(sessionId: string): Promise<{ success: boolean; preview_path: string }> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/preview`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal merender video pratinjau editorial`);
+  }
+  return res.json();
+}
+
+export async function renderEditorialFinal(sessionId: string): Promise<{ success: boolean; render_id: string }> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/render-final`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal memulai render final editorial`);
+  }
+  return res.json();
+}
+
+export function getEditorialPreviewVideoUrl(sessionId: string): string {
+  return `${API_BASE}/api/editorial/sessions/${sessionId}/preview.mp4`;
+}
+
+export function getEditorialFinalVideoUrl(sessionId: string): string {
+  return `${API_BASE}/api/editorial/sessions/${sessionId}/final.mp4`;
+}
+
+export async function listEditorialMessages(sessionId: string): Promise<EditorialMessage[]> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/messages`);
+  if (!res.ok) {
+    throw new Error(`Gagal memuat riwayat percakapan editorial`);
+  }
+  return res.json();
+}
+
+export async function sendEditorialMessage(
+  sessionId: string,
+  text: string,
+  mode = "chat",
+  timestamps?: string[]
+): Promise<EditorialMessage> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, mode, timestamps }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal mengirim pesan`);
+  }
+  return res.json();
+}
+

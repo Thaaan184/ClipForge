@@ -134,6 +134,26 @@ class EditorialAssetResponse(BaseModel):
     created_at: str
 
 
+class EditorialAssetUpdate(BaseModel):
+    label: str | None = None
+    hint: str | None = None
+
+
+class EditorialMessageCreate(BaseModel):
+    text: str
+    mode: str = "chat"
+    timestamps: list[str] = Field(default_factory=list)
+
+
+class EditorialStatusResponse(BaseModel):
+    session_id: str
+    status: str
+    current_version: int
+    error_message: str | None = None
+    failed_stage: str | None = None
+    is_rendering: bool = False
+
+
 class EditorialMessageResponse(BaseModel):
     id: str
     session_id: str

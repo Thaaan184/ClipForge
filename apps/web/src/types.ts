@@ -295,3 +295,65 @@ export interface ScenePreset {
   created_at: string;
   updated_at: string;
 }
+
+export interface EditorialSession {
+  id: string;
+  clip_id: string;
+  status:
+    | "EDITORIAL_DRAFT"
+    | "AGENT_WORKING"
+    | "PREVIEW_READY"
+    | "RENDERING_FINAL"
+    | "AUDIO_NORMALIZING"
+    | "QA"
+    | "DONE"
+    | "FAILED";
+  current_version: number;
+  style_pack: string;
+  workspace_dir: string;
+  manifest_path: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EditorialAsset {
+  id: string;
+  session_id: string;
+  filename: string;
+  type: "image" | "audio" | "video";
+  path: string;
+  label: string;
+  hint: string;
+  duration_s: number;
+  bpm?: number | null;
+  created_at: string;
+}
+
+export interface EditorialVersion {
+  id: string;
+  session_id: string;
+  version_num: number;
+  commit_sha: string;
+  summary: string;
+  created_at: string;
+}
+
+export interface EditorialMessage {
+  id: string;
+  session_id: string;
+  sender: "user" | "agent" | "system";
+  text: string;
+  mode: string;
+  metadata?: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface EditorialStatus {
+  session_id: string;
+  status: string;
+  current_version: number;
+  error_message?: string | null;
+  failed_stage?: string | null;
+  is_rendering: boolean;
+}
+
