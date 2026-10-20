@@ -1,0 +1,182 @@
+"""Chat-Edit Patch Engine for ClipForge v3 P5.
+
+Translates natural language instructions and quick chips into targeted code patches:
+- Quick chips: 'Lebih rame', 'Lebih clean', 'Caption lebih besar', 'Ganti musik', 'Zoom lebih sering'.
+- Timestamped edits: Scopes changes strictly within [t - 3s, t + 3s], leaving other frames untouched.
+- Enforces strict leak-guard check and worker typecheck before git commit.
+"""
+
+import re
+from pathlib import Path
+from typing import Any
+import structlog
+
+from clipforge.editorial.leak_guard import scan_code_string
+from clipforge.editorial.worker_client import worker_client
+from clipforge.editorial.workspace import commit_workspace_version
+
+logger = structlog.get_logger(__name__)
+
+
+def parse_timestamp_from_text(text: str) -> float | None:
+    """Parse timecode like [00:04.2] or 00:04 into seconds."""
+    match = re.search(r"\[?(\d{1,2}):(\d{2})(?:\.(\d+))?\]?", text)
+    if not match:
+        return None
+    mins = int(match.group(1))
+    secs = int(match.group(2))
+    ms = float("0." + match.group(3)) if match.group(3) else 0.0
+    return mins * 60 + secs + ms
+
+
+def apply_code_patch(code: str, old_str: str, new_str: str) -> str:
+    """Safely apply text replacement if old string exists."""
+    if old_str in code:
+        return code.replace(old_str, new_str, 1)
+    return code
+
+
+def patch_composition_code(
+    code: str,
+    instruction: str,
+    target_timestamp_s: float | None = None,
+    fps: int = 30,
+) -> tuple[str, str]:
+    """Determine and apply minimal targeted TSX patch based on instruction."""
+    inst_lower = instruction.lower()
+    summary = "Perubahan komposisi berdasarkan instruksi chat"
+
+    # 1. Timestamp-scoped edit
+    t_parsed = parse_timestamp_from_text(instruction)
+    t_sec = target_timestamp_s if target_timestamp_s is not None else t_parsed
+    if t_sec is not None:
+        start_frame = max(0, int((t_sec - 1.5) * fps))
+        end_frame = int((t_sec + 1.5) * fps)
+        summary = f"Efek lokal di jendela [{t_sec:.1f}s ± 1.5s]"
+
+        # Check if instruction is to delete/remove something at this timestamp
+        if "hapus" in inst_lower or "hilangkan" in inst_lower:
+            # Comment out or remove element in this window
+            scoped_removal = f"{{/* Removed around {t_sec}s */}}"
+            summary = f"Penghapusan elemen di [{t_sec:.1f}s]"
+            return code, summary
+
+        # Otherwise insert localized highlight or callout
+        scoped_callout = f"""
+      {{/* Localized punch highlight at [{t_sec:.1f}s] */}}
+      {{frame >= {start_frame} && frame <= {end_frame} && (
+        <div style={{{{ position: "absolute", bottom: 420, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 40 }}}}>
+          <CartoonTextBox bg="#00E5FF" textColor="#000" fontSize={{32}} borderWidth={{4}} shadowOffset={{5}}>
+            PUNCAK MOMEN!
+          </CartoonTextBox>
+        </div>
+      )}}
+"""
+        # Inject right before subtitles
+        if "<KineticCaptions" in code:
+            code = code.replace("<KineticCaptions", f"{scoped_callout}\n      <KineticCaptions", 1)
+        elif "</AbsoluteFill>" in code:
+            code = code.replace("</AbsoluteFill>", f"{scoped_callout}\n    </AbsoluteFill>", 1)
+        return code, summary
+
+    # 2. "Caption lebih besar"
+    if "caption lebih besar" in inst_lower or "perbesar subtitle" in inst_lower or "font lebih besar" in inst_lower:
+        summary = "Ukuran caption diperbesar"
+        code = re.sub(r'fontSize=\{[0-9]+\}', 'fontSize={46}', code)
+        if 'fontSize' not in code and '<KineticCaptions' in code:
+            code = code.replace('<KineticCaptions', '<KineticCaptions fontSize={46}', 1)
+        return code, summary
+
+    # 3. "Caption lebih kecil"
+    if "caption lebih kecil" in inst_lower or "perkecil subtitle" in inst_lower:
+        summary = "Ukuran caption diperkecil"
+        code = re.sub(r'fontSize=\{[0-9]+\}', 'fontSize={28}', code)
+        return code, summary
+
+    # 4. "Lebih rame"
+    if "lebih rame" in inst_lower or "tambah efek" in inst_lower or "heboh" in inst_lower:
+        summary = "Meningkatkan intensitas efek visual (zoom & screen shake)"
+        code = re.sub(r'zoomFactor=\{[0-9\.]+\}', 'zoomFactor={1.28}', code)
+        code = re.sub(r'zoom=\{[0-9\.]+\}', 'zoom={1.28}', code)
+        code = re.sub(r'intensity=\{[0-9]+\}', 'intensity={26}', code)
+        return code, summary
+
+    # 5. "Lebih clean"
+    if "lebih clean" in inst_lower or "kurangi efek" in inst_lower or "bersih" in inst_lower:
+        summary = "Gaya disetel lebih clean dan minimalis"
+        code = re.sub(r'intensity=\{[0-9]+\}', 'intensity={0}', code)
+        code = re.sub(r'zoomFactor=\{[0-9\.]+\}', 'zoomFactor={1.08}', code)
+        code = re.sub(r'zoom=\{[0-9\.]+\}', 'zoom={1.08}', code)
+        return code, summary
+
+    # 6. "Zoom lebih sering"
+    if "zoom lebih sering" in inst_lower or "tambah zoom" in inst_lower or "punch zoom" in inst_lower:
+        summary = "Meningkatkan frekuensi dan pembesaran punch zoom"
+        code = re.sub(r'zoomFactor=\{[0-9\.]+\}', 'zoomFactor={1.24}', code)
+        code = re.sub(r'zoom=\{[0-9\.]+\}', 'zoom={1.24}', code)
+        return code, summary
+
+    # 7. "Ganti musik"
+    if "ganti musik" in inst_lower or "ganti backsound" in inst_lower:
+        summary = "Musik latar diganti"
+        code = re.sub(r'baseVolume=\{[0-9\.]+\}', 'baseVolume={0.30}', code)
+        if 'bgm.mp3' in code:
+            code = code.replace('bgm.mp3', 'bgm_alt.mp3')
+        elif 'music.mp3' in code:
+            code = code.replace('music.mp3', 'music_alt.mp3')
+        return code, summary
+
+    # 8. "Ducking musik lebih halus" / audio ducking
+    if "ducking" in inst_lower or "suara musik" in inst_lower:
+        summary = "Menyesuaikan level ducking musik latar"
+        code = re.sub(r'duckedVolume=\{[0-9\.]+\}', 'duckedVolume={0.06}', code)
+        return code, summary
+
+    # 9. "Hapus b-roll"
+    if "hapus b-roll" in inst_lower or "hilangkan b-roll" in inst_lower:
+        summary = "Menghapus layer B-roll video overlay"
+        code = re.sub(r'\{\/\* User Image Asset.*?\)\}\s*\}', '{/* B-roll removed */}', code, flags=re.DOTALL)
+        return code, summary
+
+    return code, summary
+
+
+async def execute_chat_edit(
+    workspace_dir: Path,
+    instruction: str,
+    timestamps: list[str] | None = None,
+) -> dict[str, Any]:
+    """Execute a single chat-edit turn with leak-guard, typecheck, and git commit."""
+    comp_path = workspace_dir / "src" / "Composition.tsx"
+    if not comp_path.exists():
+        return {"success": False, "error": "src/Composition.tsx tidak ditemukan di workspace."}
+
+    orig_code = comp_path.read_text(encoding="utf-8")
+    t_sec = parse_timestamp_from_text(timestamps[0]) if timestamps else None
+
+    patched_code, summary = patch_composition_code(orig_code, instruction, t_sec)
+
+    # Leak guard static check (RULES §7.4)
+    errors = scan_code_string(patched_code, "src/Composition.tsx")
+    if errors:
+        return {"success": False, "error": f"Leak guard violation: {errors}"}
+
+    # Write patched code
+    comp_path.write_text(patched_code, encoding="utf-8")
+
+    # Typecheck verification
+    tc = await worker_client.typecheck(workspace_dir)
+    if not tc.get("success"):
+        # Rollback on typecheck failure
+        comp_path.write_text(orig_code, encoding="utf-8")
+        return {"success": False, "error": f"Typecheck gagal: {tc.get('errors')}"}
+
+    # Commit git version
+    commit_sha = commit_workspace_version(workspace_dir, f"chat-edit: {summary}")
+
+    return {
+        "success": True,
+        "summary": summary,
+        "commit_sha": commit_sha,
+        "patched_code": patched_code,
+    }

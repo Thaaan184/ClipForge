@@ -764,4 +764,56 @@ export async function updateEditorialCode(sessionId: string, code: string): Prom
   return res.json();
 }
 
+export async function submitEditorialScript(
+  sessionId: string,
+  scriptText: string,
+  mode: "strict" | "guide" = "guide"
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/script`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ script_text: scriptText, mode }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal menyelaraskan script`);
+  }
+  return res.json();
+}
+
+export async function listStylePacks(): Promise<any[]> {
+  const res = await fetch(`${API_BASE}/api/editorial/style-packs`);
+  if (!res.ok) {
+    return [];
+  }
+  return res.json();
+}
+
+export async function applyStylePack(sessionId: string, stylePack: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/apply-style-pack`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ style_pack: stylePack }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal menerapkan style pack`);
+  }
+  return res.json();
+}
+
+export async function saveCustomStylePack(pack: any): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/editorial/style-packs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(pack),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal menyimpan style pack`);
+  }
+  return res.json();
+}
+
+
 

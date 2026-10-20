@@ -21,6 +21,10 @@ import {
   runEditorialAutopilot,
   getEditorialCode,
   updateEditorialCode,
+  submitEditorialScript,
+  listStylePacks,
+  applyStylePack,
+  saveCustomStylePack,
 } from "../../api";
 import { AssetTray } from "./AssetTray";
 import { VersionHistory } from "./VersionHistory";
@@ -42,6 +46,9 @@ import {
   X,
   Save,
   Check,
+  Palette,
+  BookmarkPlus,
+  FileText,
 } from "lucide-react";
 
 interface EditorialStudioProps {
@@ -89,6 +96,22 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [previewVersionKey, setPreviewVersionKey] = useState<number>(Date.now());
 
+  // P5 State: Style Packs
+  const [stylePacks, setStylePacks] = useState<any[]>([]);
+  const [selectedStylePack, setSelectedStylePack] = useState<string>("gaming_hype");
+  const [isApplyingStyle, setIsApplyingStyle] = useState(false);
+  const [isSaveStyleModalOpen, setIsSaveStyleModalOpen] = useState(false);
+  const [customStyleName, setCustomStyleName] = useState("");
+  const [customStyleDesc, setCustomStyleDesc] = useState("");
+  const [isSavingCustomStyle, setIsSavingCustomStyle] = useState(false);
+
+  // P5 State: Script Mode
+  const [isScriptModalOpen, setIsScriptModalOpen] = useState(false);
+  const [scriptText, setScriptText] = useState("");
+  const [scriptMode, setScriptMode] = useState<"strict" | "guide">("strict");
+  const [isAligningScript, setIsAligningScript] = useState(false);
+  const [beatSheetResult, setBeatSheetResult] = useState<any>(null);
+
   // 1. Initial Load: create or fetch active session
   const initSession = async () => {
     try {
@@ -97,14 +120,18 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       const sess = await createEditorialSession(clipId);
       setSession(sess);
 
-      const [astList, verList, msgList] = await Promise.all([
+      const [astList, verList, msgList, packs] = await Promise.all([
         listEditorialAssets(sess.id),
         listEditorialVersions(sess.id),
         listEditorialMessages(sess.id),
+        listStylePacks().catch(() => []),
       ]);
       setAssets(astList);
       setVersions(verList);
       setMessages(msgList);
+      if (packs && packs.length > 0) {
+        setStylePacks(packs);
+      }
     } catch (err: any) {
       setGlobalError(err.message || "Gagal memuat sesi editorial studio.");
     } finally {
@@ -311,6 +338,71 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
     setTimeout(() => setCodeCopied(false), 2000);
   };
 
+  // 10. Action: Apply Style Pack
+  const handleApplyStyle = async (packName: string) => {
+    if (!session) return;
+    try {
+      setIsApplyingStyle(true);
+      setGlobalError(null);
+      await applyStylePack(session.id, packName);
+      setSelectedStylePack(packName);
+      await Promise.all([refreshVersions(), refreshMessages()]);
+      setPreviewVersionKey(Date.now());
+      if (videoRef.current) {
+        videoRef.current.load();
+      }
+    } catch (err: any) {
+      setGlobalError(err.message || "Gagal menerapkan style pack.");
+    } finally {
+      setIsApplyingStyle(false);
+    }
+  };
+
+  // 11. Action: Save Custom Style Pack
+  const handleSaveStyle = async () => {
+    if (!customStyleName.trim()) return;
+    try {
+      setIsSavingCustomStyle(true);
+      setGlobalError(null);
+      await saveCustomStylePack({
+        name: customStyleName.toLowerCase().replace(/\s+/g, "_"),
+        label: customStyleName,
+        description: customStyleDesc,
+        zoom_factor: 1.18,
+        shake_intensity: 18.0,
+      });
+      const packs = await listStylePacks();
+      setStylePacks(packs);
+      setIsSaveStyleModalOpen(false);
+      setCustomStyleName("");
+      setCustomStyleDesc("");
+    } catch (err: any) {
+      setGlobalError(err.message || "Gagal menyimpan preset gaya.");
+    } finally {
+      setIsSavingCustomStyle(false);
+    }
+  };
+
+  // 12. Action: Submit Editorial Script
+  const handleSubmitScript = async () => {
+    if (!session || !scriptText.trim()) return;
+    try {
+      setIsAligningScript(true);
+      setGlobalError(null);
+      const res = await submitEditorialScript(session.id, scriptText, scriptMode);
+      setBeatSheetResult(res.beat_sheet);
+      await Promise.all([refreshVersions(), refreshMessages()]);
+      setPreviewVersionKey(Date.now());
+      if (videoRef.current) {
+        videoRef.current.load();
+      }
+    } catch (err: any) {
+      setGlobalError(err.message || "Gagal menyelaraskan naskah script.");
+    } finally {
+      setIsAligningScript(false);
+    }
+  };
+
   const handleInsertTimestamp = () => {
     const cur = videoRef.current?.currentTime || 0;
     const m = Math.floor(cur / 60);
@@ -393,6 +485,41 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          {/* Style Pack Selector */}
+          <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2.5 py-1">
+            <Palette className="w-3.5 h-3.5 text-pink-400" />
+            <select
+              value={selectedStylePack}
+              disabled={isApplyingStyle || isRendering || isAutopilotWorking}
+              onChange={(e) => handleApplyStyle(e.target.value)}
+              className="bg-transparent text-xs font-semibold text-slate-200 focus:outline-none cursor-pointer"
+            >
+              {stylePacks.length > 0 ? (
+                stylePacks.map((sp) => (
+                  <option key={sp.name} value={sp.name} className="bg-slate-900 text-slate-200">
+                    {sp.label || sp.name}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="gaming_hype" className="bg-slate-900 text-slate-200">Gaming Hype</option>
+                  <option value="minimal_clean" className="bg-slate-900 text-slate-200">Minimal Clean</option>
+                  <option value="hyper_meme" className="bg-slate-900 text-slate-200">Hyper Meme</option>
+                </>
+              )}
+            </select>
+          </div>
+
+          {/* Simpan Gaya Ini */}
+          <button
+            onClick={() => setIsSaveStyleModalOpen(true)}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition border border-slate-700"
+            title="Simpan preset gaya saat ini"
+          >
+            <BookmarkPlus className="w-3.5 h-3.5 text-pink-400" />
+            <span className="hidden md:inline">Simpan Gaya</span>
+          </button>
+
           <button
             onClick={handleViewCode}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition border border-slate-700"
@@ -621,6 +748,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
                 onRunAutopilot={handleRunAutopilot}
                 onOpenAssetsTab={() => setActiveTab("assets")}
                 onViewCode={handleViewCode}
+                onOpenScriptModal={() => setIsScriptModalOpen(true)}
                 reviewPlanToggle={reviewPlanToggle}
                 onToggleReviewPlan={() => setReviewPlanToggle(!reviewPlanToggle)}
                 externalInputText={externalChatInput}
@@ -725,6 +853,182 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
                   <span>{isSavingCode ? "Memvalidasi..." : "Simpan & Render Ulang"}</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Script Mode Modal (PLAN.md P5 Task 2) */}
+      {isScriptModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-sky-400" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Kirim Naskah Script Editorial
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsScriptModalOpen(false)}
+                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+              <div className="flex items-center gap-4 bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+                <span className="text-xs font-semibold text-slate-300">Mode Eksekusi:</span>
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="script_mode"
+                    value="strict"
+                    checked={scriptMode === "strict"}
+                    onChange={() => setScriptMode("strict")}
+                    className="text-indigo-600 focus:ring-0"
+                  />
+                  <span>Ikuti Persis (Strict)</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="script_mode"
+                    value="guide"
+                    checked={scriptMode === "guide"}
+                    onChange={() => setScriptMode("guide")}
+                    className="text-indigo-600 focus:ring-0"
+                  />
+                  <span>Jadikan Panduan (Guide)</span>
+                </label>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-400">
+                  Teks Naskah / Markdown (per baris atau paragraf):
+                </label>
+                <textarea
+                  value={scriptText}
+                  onChange={(e) => setScriptText(e.target.value)}
+                  placeholder="Ketik naskah atau copy paste teks skrip di sini..."
+                  rows={8}
+                  className="w-full bg-slate-950 text-slate-200 p-3 rounded-lg border border-slate-800 focus:outline-none focus:border-indigo-500 text-xs font-mono resize-none leading-relaxed"
+                />
+              </div>
+
+              {beatSheetResult && (
+                <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 flex flex-col gap-2">
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span className="text-slate-300">Hasil Penyelarasan (Beat Sheet):</span>
+                    <span className="text-emerald-400 font-mono">
+                      Rate: {Math.round(beatSheetResult.alignment_rate * 100)}% ({beatSheetResult.aligned_lines}/{beatSheetResult.total_lines} baris)
+                    </span>
+                  </div>
+                  <div className="max-h-36 overflow-y-auto flex flex-col gap-1 pr-1">
+                    {beatSheetResult.beats?.map((b: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className={`text-[11px] p-1.5 rounded flex items-center justify-between font-mono ${
+                          b.aligned
+                            ? "bg-slate-900/80 text-slate-200 border border-slate-800"
+                            : "bg-red-950/40 text-red-300 border border-red-900/60"
+                        }`}
+                      >
+                        <span className="truncate max-w-[70%]">{b.line_text}</span>
+                        <span>
+                          {b.aligned ? `[${b.start_s.toFixed(1)}s - ${b.end_s.toFixed(1)}s]` : "⚠️ TIDAK TER-ALIGN"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-4 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
+              <div className="text-[11px] text-slate-500">
+                Penyelarasan otomatis menggunakan pencocokan urutan kata transkrip.
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsScriptModalOpen(false)}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition"
+                >
+                  Tutup
+                </button>
+                <button
+                  onClick={handleSubmitScript}
+                  disabled={isAligningScript || !scriptText.trim()}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-bold transition disabled:opacity-50"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>{isAligningScript ? "Menyelaraskan..." : "Selaraskan & Terapkan"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save Style Modal (PLAN.md P5 Task 5) */}
+      {isSaveStyleModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-md flex flex-col shadow-2xl overflow-hidden">
+            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <BookmarkPlus className="w-4 h-4 text-pink-400" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Simpan Gaya Ini Sebagai Preset
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsSaveStyleModalOpen(false)}
+                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-slate-400">Nama Preset Gaya:</label>
+                <input
+                  type="text"
+                  value={customStyleName}
+                  onChange={(e) => setCustomStyleName(e.target.value)}
+                  placeholder="Contoh: Valorant Hype Clean"
+                  className="bg-slate-950 text-slate-200 px-3 py-2 rounded-lg border border-slate-800 text-xs focus:outline-none focus:border-pink-500"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-slate-400">Deskripsi Gaya:</label>
+                <input
+                  type="text"
+                  value={customStyleDesc}
+                  onChange={(e) => setCustomStyleDesc(e.target.value)}
+                  placeholder="Contoh: Shake agresif dengan caption kuning tebal"
+                  className="bg-slate-950 text-slate-200 px-3 py-2 rounded-lg border border-slate-800 text-xs focus:outline-none focus:border-pink-500"
+                />
+              </div>
+            </div>
+
+            <div className="px-4 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setIsSaveStyleModalOpen(false)}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSaveStyle}
+                disabled={isSavingCustomStyle || !customStyleName.trim()}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-pink-600 hover:bg-pink-500 text-white rounded text-xs font-bold transition disabled:opacity-50"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{isSavingCustomStyle ? "Menyimpan..." : "Simpan Preset"}</span>
+              </button>
             </div>
           </div>
         </div>

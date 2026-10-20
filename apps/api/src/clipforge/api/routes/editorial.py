@@ -40,6 +40,15 @@ from clipforge.editorial.workspace import (
     init_workspace,
     restore_workspace_version,
 )
+from clipforge.editorial.chat_patcher import execute_chat_edit
+from clipforge.editorial.script_aligner import align_script_to_transcript
+from clipforge.editorial.broll_planner import plan_broll_placements
+from clipforge.editorial.style_packs import (
+    list_all_style_packs,
+    get_style_pack,
+    save_custom_style_pack,
+    StylePackDefinition,
+)
 
 router = APIRouter(prefix="/api/editorial", tags=["editorial"])
 
@@ -828,9 +837,40 @@ async def send_editorial_message(
         (msg_id, session_id, payload.text, payload.mode, json.dumps(meta), now_iso),
     )
 
-    # 2. Record agent stub echo response (P3 requirement: stub echo)
+    # 2. Execute chat-edit patch if workspace is ready
+    ws_dir = get_workspace_dir(session_id)
+    reply_text = f"Pesan diterima: \"{payload.text}\"."
+
+    if ws_dir.exists() and (ws_dir / "src" / "Composition.tsx").exists():
+        patch_res = await execute_chat_edit(ws_dir, payload.text, payload.timestamps)
+        if patch_res.get("success"):
+            commit_sha = patch_res["commit_sha"]
+            summary = patch_res["summary"]
+
+            async with db.execute(
+                "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
+                (session_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                next_ver = (row[0] or 1) + 1
+
+            ver_id = f"ver_{commit_sha[:8]}"
+            await db.execute(
+                "INSERT INTO editorial_versions (id, session_id, version_num, commit_sha, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (ver_id, session_id, next_ver, commit_sha, f"v{next_ver}: {summary}", now_iso),
+            )
+            await db.execute(
+                "UPDATE editorial_sessions SET current_version = ?, status = 'PREVIEW_READY', updated_at = ? WHERE id = ?",
+                (next_ver, now_iso, session_id),
+            )
+            reply_text = f"Pesan diterima: \"{payload.text}\". {summary}. Komposisi v{next_ver} siap dipratinjau!"
+        else:
+            err = patch_res.get("error", "Instruksi tidak dapat diterapkan")
+            reply_text = f"Pesan diterima: \"{payload.text}\". (Catatan: {err})"
+    else:
+        reply_text = f"Pesan diterima: \"{payload.text}\". (Mode Editorial Studio aktif)."
+
     agent_msg_id = f"msg_{uuid.uuid4().hex[:8]}"
-    reply_text = f"Pesan diterima: \"{payload.text}\". (Mode Editorial Studio P3 aktif dengan komposisi manual. AI Autopilot tool-loop akan aktif di P4)."
     await db.execute(
         """
         INSERT INTO editorial_messages (id, session_id, sender, text, mode, meta_json, created_at)
@@ -1011,4 +1051,163 @@ async def update_editorial_code(
     await db.commit()
 
     return {"success": True, "version": next_ver, "commit_sha": sha}
+
+
+# ==========================================
+# 4. P5: Script-Driven, Style Packs & B-Roll
+# ==========================================
+
+
+@router.get("/style-packs")
+async def list_style_packs() -> list[dict[str, Any]]:
+    """Retrieve all available style packs (built-ins + custom)."""
+    return list_all_style_packs()
+
+
+@router.post("/style-packs", status_code=201)
+async def create_custom_style_pack(payload: StylePackDefinition) -> dict[str, Any]:
+    """Save custom style pack ('Simpan gaya ini')."""
+    return save_custom_style_pack(payload)
+
+
+@router.post("/sessions/{session_id}/apply-style-pack")
+async def apply_style_pack_to_session(
+    session_id: str,
+    payload: dict[str, str],
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Apply a style pack to the current editorial session."""
+    pack_name = payload.get("style_pack", "gaming_hype")
+    pack = get_style_pack(pack_name)
+    ws_dir = get_workspace_dir(session_id)
+    if not ws_dir.exists():
+        raise HTTPException(status_code=404, detail="Workspace direktori tidak ditemukan")
+
+    m_file = ws_dir / "context" / "manifest.json"
+    manifest: dict[str, Any] = {}
+    if m_file.exists():
+        manifest = json.loads(m_file.read_text(encoding="utf-8"))
+        manifest["style_pack"] = pack_name
+        m_file.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    style_guide = f"# Style Pack: {pack['label']}\n{pack['description']}\nZoom: {pack['zoom_factor']}, Shake: {pack['shake_intensity']}"
+    (ws_dir / "context" / "style.md").write_text(style_guide, encoding="utf-8")
+
+    from clipforge.editorial.agent_runtime import synthesize_gaming_composition
+    new_tsx = synthesize_gaming_composition(manifest, style_guide)
+    (ws_dir / "src" / "Composition.tsx").write_text(new_tsx, encoding="utf-8")
+
+    tc = await worker_client.typecheck(ws_dir)
+    if not tc.get("success"):
+        raise HTTPException(status_code=400, detail=f"Typecheck gagal: {tc.get('errors')}")
+
+    await worker_client.render_preview(ws_dir, ws_dir / "preview.mp4", concurrency=4)
+
+    sha = commit_workspace_version(ws_dir, f"style-pack: applied {pack['label']}")
+    async with db.execute(
+        "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        next_ver = (row[0] or 1) + 1
+
+    now_iso = datetime.now(UTC).isoformat()
+    await db.execute(
+        "INSERT INTO editorial_versions (id, session_id, version_num, commit_sha, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (f"ver_{sha[:8]}", session_id, next_ver, sha, f"v{next_ver}: Terapkan gaya {pack['label']}", now_iso),
+    )
+    await db.execute(
+        "UPDATE editorial_sessions SET current_version = ?, status = 'PREVIEW_READY', updated_at = ? WHERE id = ?",
+        (next_ver, now_iso, session_id),
+    )
+    await db.commit()
+    return {"success": True, "style_pack": pack_name, "version": next_ver, "commit_sha": sha}
+
+
+@router.post("/sessions/{session_id}/script")
+async def submit_editorial_script(
+    session_id: str,
+    payload: dict[str, Any],
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Align script text to transcript, generate beat sheet, and apply composition update."""
+    script_text = payload.get("script_text", "").strip()
+    mode = payload.get("mode", "guide")
+    if not script_text:
+        raise HTTPException(status_code=400, detail="Teks script tidak boleh kosong")
+
+    ws_dir = get_workspace_dir(session_id)
+    if not ws_dir.exists():
+        raise HTTPException(status_code=404, detail="Workspace direktori tidak ditemukan")
+
+    m_file = ws_dir / "context" / "manifest.json"
+    manifest: dict[str, Any] = {}
+    if m_file.exists():
+        manifest = json.loads(m_file.read_text(encoding="utf-8"))
+
+    t_words = manifest.get("transcript", {}).get("words", [])
+    clip_dur = manifest.get("clip", {}).get("duration", 30.0)
+
+    beat_sheet = align_script_to_transcript(script_text, t_words, mode=mode, clip_duration=clip_dur)
+
+    (ws_dir / "context" / "script.md").write_text(script_text, encoding="utf-8")
+    (ws_dir / "context" / "beat_sheet.json").write_text(beat_sheet.model_dump_json(indent=2), encoding="utf-8")
+
+    if mode == "strict" and beat_sheet.beats:
+        overridden_words = []
+        for b in beat_sheet.beats:
+            if b.aligned:
+                tokens = b.line_text.split()
+                if tokens:
+                    dur_per_tok = (b.end_s - b.start_s) / len(tokens)
+                    for i, tok in enumerate(tokens):
+                        overridden_words.append({
+                            "w": tok,
+                            "start": round(b.start_s + i * dur_per_tok, 2),
+                            "end": round(b.start_s + (i + 1) * dur_per_tok, 2),
+                            "conf": b.confidence,
+                        })
+        if overridden_words:
+            manifest["transcript"]["words"] = overridden_words
+
+    manifest["script"] = {"mode": mode, "text": script_text}
+    m_file.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    from clipforge.editorial.agent_runtime import synthesize_gaming_composition
+    style_guide = (ws_dir / "context" / "style.md").read_text(encoding="utf-8") if (ws_dir / "context" / "style.md").exists() else ""
+    new_tsx = synthesize_gaming_composition(manifest, style_guide)
+    (ws_dir / "src" / "Composition.tsx").write_text(new_tsx, encoding="utf-8")
+
+    tc = await worker_client.typecheck(ws_dir)
+    if not tc.get("success"):
+        raise HTTPException(status_code=400, detail=f"Typecheck gagal: {tc.get('errors')}")
+
+    await worker_client.render_preview(ws_dir, ws_dir / "preview.mp4", concurrency=4)
+
+    sha = commit_workspace_version(ws_dir, f"script-mode ({mode}): aligned {beat_sheet.aligned_lines}/{beat_sheet.total_lines} lines")
+    async with db.execute(
+        "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        next_ver = (row[0] or 1) + 1
+
+    now_iso = datetime.now(UTC).isoformat()
+    summary = f"v{next_ver}: Script {mode} ({beat_sheet.aligned_lines}/{beat_sheet.total_lines} ter-align)"
+    await db.execute(
+        "INSERT INTO editorial_versions (id, session_id, version_num, commit_sha, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (f"ver_{sha[:8]}", session_id, next_ver, sha, summary, now_iso),
+    )
+    await db.execute(
+        "UPDATE editorial_sessions SET current_version = ?, status = 'PREVIEW_READY', updated_at = ? WHERE id = ?",
+        (next_ver, now_iso, session_id),
+    )
+    await db.commit()
+
+    return {
+        "success": True,
+        "beat_sheet": beat_sheet.model_dump(),
+        "version": next_ver,
+        "commit_sha": sha,
+    }
 
