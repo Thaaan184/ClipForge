@@ -1,5 +1,6 @@
 """Async HTTP client communicating with internal Remotion worker (127.0.0.1:8765)."""
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,11 @@ from clipforge.core.config import settings
 
 logger = structlog.get_logger(__name__)
 
-WORKER_BASE_URL = getattr(settings, "remotion_worker_url", "http://127.0.0.1:8765")
+WORKER_BASE_URL = (
+    os.environ.get("CF_REMOTION_WORKER_URL")
+    or os.environ.get("REMOTION_WORKER_URL")
+    or getattr(settings, "remotion_worker_url", "http://127.0.0.1:8765")
+)
 DEFAULT_TIMEOUT = 360.0  # Up to 6 minutes for full renders
 
 
