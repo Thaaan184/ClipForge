@@ -6,11 +6,14 @@ Translates natural language instructions and quick chips into targeted code patc
 - Enforces strict leak-guard check and worker typecheck before git commit.
 """
 
+import json
 import re
 from pathlib import Path
 from typing import Any
 import structlog
+from openai import AsyncOpenAI
 
+from clipforge.core.config import settings
 from clipforge.editorial.leak_guard import scan_code_string
 from clipforge.editorial.worker_client import worker_client
 from clipforge.editorial.workspace import commit_workspace_version
@@ -141,12 +144,84 @@ def patch_composition_code(
     return code, summary
 
 
+async def llm_chat_edit(
+    workspace_dir: Path,
+    instruction: str,
+    timestamps: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """Invoke LLM for conversational discussion or TSX code composition generation."""
+    if not settings.llm_base_url:
+        return None
+
+    comp_path = workspace_dir / "src" / "Composition.tsx"
+    orig_code = comp_path.read_text(encoding="utf-8") if comp_path.exists() else ""
+    manifest_path = workspace_dir / "context" / "manifest.json"
+    manifest_info = ""
+    if manifest_path.exists():
+        try:
+            m = json.loads(manifest_path.read_text(encoding="utf-8"))
+            clip = m.get("clip", {})
+            words = m.get("transcript", {}).get("words", [])
+            peaks = m.get("signals", {}).get("peaks", [])
+            manifest_info = (
+                f"Durasi: {clip.get('duration_s', 40)}s ({clip.get('fps', 30)} FPS). "
+                f"Jumlah kata transkrip: {len(words)}. Sinyal puncak: {peaks[:8]}."
+            )
+            if words:
+                word_samples = [
+                    f"'{w.get('text')}' ({w.get('start_s')}s-{w.get('end_s')}s)"
+                    for w in words[:20]
+                ]
+                manifest_info += f"\nTranskrip kata: {', '.join(word_samples)}"
+        except Exception:
+            pass
+
+    system_prompt = (
+        "Kamu adalah Lead Video Editor AI untuk ClipForge Editorial Studio. "
+        "Gaya bicaramu: Profesional, solutif, taktis, bersahabat, dan santai seperti rekan editor berpengalaman.\n"
+        "Aturan:\n"
+        "1. Jika pengguna bertanya, brainstorming, meminta opini, atau mendiskusikan konsep/ide, jawab langsung secara komprehensif tanpa kode (atau dengan snippet kecil sebagai referensi).\n"
+        "2. Jika pengguna meminta perubahan, perbaikan, atau implementasi kode komposisi video Remotion, sertakan kode LENGKAP untuk 'src/Composition.tsx' di dalam blok ```tsx ... ```.\n"
+        "3. Kode TSX wajib valid Remotion vertikal 9:16 (1080x1920, 30fps), dilarang menggunakan process.env / child_process / eval / dynamic import.\n"
+        "4. Selalu jelaskan alasan dan langkah editing yang kamu lakukan."
+    )
+
+    user_prompt = f"Pesan Pengguna: {instruction}\n"
+    if timestamps:
+        user_prompt += f"Timestamp terkait: {', '.join(timestamps)}\n"
+    if manifest_info:
+        user_prompt += f"\n[Konteks Klip]\n{manifest_info}\n"
+    if orig_code:
+        user_prompt += f"\n[src/Composition.tsx Saat Ini]\n```tsx\n{orig_code}\n```\n"
+
+    try:
+        client = AsyncOpenAI(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key or "sk-dummy",
+        )
+        model_name = settings.llm_model or "ag/gemini-3.8-flash"
+        resp = await client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=4000,
+            temperature=0.7,
+        )
+        content = resp.choices[0].message.content or ""
+        return {"content": content, "orig_code": orig_code}
+    except Exception as exc:
+        logger.warning("llm_chat_edit_failed", error=str(exc))
+        return None
+
+
 async def execute_chat_edit(
     workspace_dir: Path,
     instruction: str,
     timestamps: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Execute a single chat-edit turn with leak-guard, typecheck, and git commit."""
+    """Execute a single chat-edit turn with LLM assistant, leak-guard, typecheck, and git commit."""
     comp_path = workspace_dir / "src" / "Composition.tsx"
     if not comp_path.exists():
         return {"success": False, "error": "src/Composition.tsx tidak ditemukan di workspace."}
@@ -154,7 +229,79 @@ async def execute_chat_edit(
     orig_code = comp_path.read_text(encoding="utf-8")
     t_sec = parse_timestamp_from_text(timestamps[0]) if timestamps else None
 
+    # 1. Try LLM first if configured
+    llm_res = await llm_chat_edit(workspace_dir, instruction, timestamps)
+    if llm_res and llm_res.get("content"):
+        reply_content = llm_res["content"]
+
+        # Check if LLM outputted a full replacement code block for Composition.tsx
+        code_match = re.search(
+            r"```(?:tsx|typescript|jsx|javascript)?\s*(import\s+React.*?export\s+const\s+EditorialComposition.*?)\s*```",
+            reply_content,
+            re.DOTALL,
+        )
+        if not code_match:
+            # Fallback pattern for any valid full TSX export
+            code_match = re.search(
+                r"```(?:tsx|typescript)?\s*(import\s+React.*?export\s+const.*?)\s*```",
+                reply_content,
+                re.DOTALL,
+            )
+
+        if code_match:
+            new_code = code_match.group(1).strip()
+            errors = scan_code_string(new_code, "src/Composition.tsx")
+            if not errors:
+                comp_path.write_text(new_code, encoding="utf-8")
+                tc = await worker_client.typecheck(workspace_dir)
+                if tc.get("success"):
+                    commit_sha = commit_workspace_version(
+                        workspace_dir, f"chat-edit AI: {instruction[:60]}"
+                    )
+                    clean_reply = re.sub(
+                        r"```(?:tsx|typescript|jsx|javascript)?\s*import\s+React.*?```",
+                        "*(Kode komposisi diperbarui)*",
+                        reply_content,
+                        flags=re.DOTALL,
+                    ).strip()
+                    return {
+                        "success": True,
+                        "code_changed": True,
+                        "summary": "Komposisi diperbarui oleh AI",
+                        "commit_sha": commit_sha,
+                        "reply": clean_reply or reply_content,
+                    }
+                else:
+                    # Rollback on typecheck error
+                    comp_path.write_text(orig_code, encoding="utf-8")
+                    return {
+                        "success": True,
+                        "code_changed": False,
+                        "reply": f"{reply_content}\n\n*(Catatan: Kode yang diusulkan gagal validasi TypeScript: {tc.get('errors')}. Komposisi sebelumnya tetap dipertahankan)*",
+                    }
+            else:
+                return {
+                    "success": True,
+                    "code_changed": False,
+                    "reply": f"{reply_content}\n\n*(Catatan: Kode yang diusulkan melanggar aturan keamanan leak guard: {errors})*",
+                }
+        else:
+            # Pure conversational reply / brainstorming (no code changed)
+            return {
+                "success": True,
+                "code_changed": False,
+                "reply": reply_content,
+            }
+
+    # 2. Fallback to heuristic patch if LLM is unavailable
     patched_code, summary = patch_composition_code(orig_code, instruction, t_sec)
+
+    if patched_code == orig_code:
+        return {
+            "success": True,
+            "code_changed": False,
+            "reply": f"Pesan diterima: \"{instruction}\". Tidak ada pola perubahan kode yang cocok.",
+        }
 
     # Leak guard static check (RULES §7.4)
     errors = scan_code_string(patched_code, "src/Composition.tsx")
@@ -176,7 +323,9 @@ async def execute_chat_edit(
 
     return {
         "success": True,
+        "code_changed": True,
         "summary": summary,
         "commit_sha": commit_sha,
         "patched_code": patched_code,
+        "reply": f"Pesan diterapkan: {summary}.",
     }

@@ -32,7 +32,7 @@ services:
       - CF_ALLOWED_HOSTS=youtube.com,www.youtube.com,m.youtube.com,youtu.be
       - CF_LLM_BASE_URL=${CF_LLM_BASE_URL:-${LLM_API_BASE:-}}
       - CF_LLM_API_KEY=${CF_LLM_API_KEY:-${LLM_API_KEY:-}}
-      - CF_LLM_MODEL=${CF_LLM_MODEL:-gemini-2.5-flash}
+      - CF_LLM_MODEL=${CF_LLM_MODEL:-ag/gemini-3.8-flash}
       - CF_REMOTION_WORKER_URL=http://worker:8765
       - REMOTION_WORKER_URL=http://worker:8765
     volumes:

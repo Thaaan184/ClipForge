@@ -895,26 +895,30 @@ async def send_editorial_message(
     if ws_dir.exists() and (ws_dir / "src" / "Composition.tsx").exists():
         patch_res = await execute_chat_edit(ws_dir, payload.text, payload.timestamps)
         if patch_res.get("success"):
-            commit_sha = patch_res["commit_sha"]
-            summary = patch_res["summary"]
+            reply_text = patch_res.get("reply") or f"Pesan diterima: \"{payload.text}\"."
+            if patch_res.get("code_changed"):
+                commit_sha = patch_res.get("commit_sha", "")
+                summary = patch_res.get("summary", "Update komposisi")
 
-            async with db.execute(
-                "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
-                (session_id,),
-            ) as cur:
-                row = await cur.fetchone()
-                next_ver = (row[0] or 1) + 1
+                async with db.execute(
+                    "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
+                    (session_id,),
+                ) as cur:
+                    row = await cur.fetchone()
+                    next_ver = (row[0] or 1) + 1
 
-            ver_id = f"ver_{commit_sha[:8]}"
-            await db.execute(
-                "INSERT INTO editorial_versions (id, session_id, version_num, commit_sha, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (ver_id, session_id, next_ver, commit_sha, f"v{next_ver}: {summary}", now_iso),
-            )
-            await db.execute(
-                "UPDATE editorial_sessions SET current_version = ?, status = 'PREVIEW_READY', updated_at = ? WHERE id = ?",
-                (next_ver, now_iso, session_id),
-            )
-            reply_text = f"Pesan diterima: \"{payload.text}\". {summary}. Komposisi v{next_ver} siap dipratinjau!"
+                ver_id = f"ver_{next_ver}_{uuid.uuid4().hex[:8]}"
+                await db.execute(
+                    """
+                    INSERT INTO editorial_versions (id, session_id, version_num, commit_sha, summary, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (ver_id, session_id, next_ver, commit_sha, f"v{next_ver}: {summary}", now_iso),
+                )
+                await db.execute(
+                    "UPDATE editorial_sessions SET current_version = ?, status = 'PREVIEW_READY', updated_at = ? WHERE id = ?",
+                    (next_ver, now_iso, session_id),
+                )
         else:
             err = patch_res.get("error", "Instruksi tidak dapat diterapkan")
             reply_text = f"Pesan diterima: \"{payload.text}\". (Catatan: {err})"
