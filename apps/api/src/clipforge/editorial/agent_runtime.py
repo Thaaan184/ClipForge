@@ -365,9 +365,15 @@ export const EditorialComposition: React.FC = () => {{
       />
 """
 
-    code += """
+    sub_preset = str(clip.get("render_params", {}).get("subtitle_style") or "").lower()
+    has_subtitles = sub_preset not in ("none", "off", "disable", "no_subtitles", "tanpa_subtitle")
+
+    if has_subtitles:
+        code += """
       {/* Subtitles: Dynamic Kinetic Captions in Bottom Safezone */}
       <KineticCaptions words={words} />
+"""
+    code += """
     </AbsoluteFill>
   );
 };

@@ -816,12 +816,21 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
           </div>
 
           {/* Note Banner */}
-          <div className="bg-card/90 border border-line px-3 py-1.5 text-[11px] font-mono text-muted flex items-start sm:items-center gap-2">
-            <span className="text-action font-extrabold uppercase shrink-0">CATATAN:</span>
-            <span className="leading-tight">
-              Hit box geser urutan khusus di icon <strong className="text-copy">Grip (⋮⋮ #{'N'})</strong> paling kiri. Kolom teks dan timing bebas diketik, diklik, dan diblok tanpa bisa tergeser.
-            </span>
-          </div>
+          {stylePreset === "none" ? (
+            <div className="bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[11px] font-mono text-amber-200 flex items-center gap-2">
+              <span className="font-bold uppercase shrink-0">MODE NON-SUBTITLE:</span>
+              <span>
+                Preset diset ke "Tanpa Subtitle". Subtitle tidak akan di-burn ke video final. Ubah <strong>Preset Style ASS</strong> jika ingin memunculkan subtitle.
+              </span>
+            </div>
+          ) : (
+            <div className="bg-card/90 border border-line px-3 py-1.5 text-[11px] font-mono text-muted flex items-start sm:items-center gap-2">
+              <span className="text-action font-extrabold uppercase shrink-0">CATATAN:</span>
+              <span className="leading-tight">
+                Hit box geser urutan khusus di icon <strong className="text-copy">Grip (⋮⋮ #{'N'})</strong> paling kiri. Kolom teks dan timing bebas diketik, diklik, dan diblok tanpa bisa tergeser.
+              </span>
+            </div>
+          )}
 
           <div className="h-[480px] overflow-y-auto bg-card p-2.5 border border-line flex flex-col gap-2 font-mono">
             {words.length === 0 ? (
@@ -1118,7 +1127,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
               <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-white/10 pointer-events-none" />
 
               {/* Subtitles Overlay: Multiple concurrent subtitles appear simultaneously */}
-              {displayedSubtitles.map((sub, sIdx) => {
+              {stylePreset !== "none" && displayedSubtitles.map((sub, sIdx) => {
                 const defaultAssY = 1680 - sIdx * 140;
                 const activeAssY =
                   sub.pos_y !== null && sub.pos_y !== undefined
@@ -1181,7 +1190,11 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
               {/* Bottom status badge in preview */}
               <div className="absolute bottom-2 left-2 right-2 bg-black/80 border border-line px-2 py-1 text-[9px] font-mono text-muted flex items-center justify-between pointer-events-none">
                 <span>T: {previewTime.toFixed(1)}s</span>
-                <span>AKTIF: {displayedSubtitles.length} SUBTITLE</span>
+                <span>
+                  {stylePreset === "none"
+                    ? "SUBTITLE NONAKTIF"
+                    : `AKTIF: ${displayedSubtitles.length} SUBTITLE`}
+                </span>
               </div>
             </div>
           </div>
