@@ -11,6 +11,7 @@ import {
   PlusCircle,
   Code2,
   Loader2,
+  Clock,
 } from "lucide-react";
 
 interface EditorialChatProps {
@@ -59,6 +60,26 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Dynamic Bot Thinking State
+  const [thinkingStep, setThinkingStep] = useState(0);
+  const THINKING_STEPS = [
+    { label: "Menganalisis instruksi & konteks video...", icon: Sparkles },
+    { label: "Mengevaluasi timeline, transkrip & audio...", icon: Clock },
+    { label: "Menyusun balasan & validasi Remotion TSX...", icon: Code2 },
+    { label: "Finishing & mematangkan respon...", icon: Bot },
+  ];
+
+  useEffect(() => {
+    if (!isSending) {
+      setThinkingStep(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setThinkingStep((prev) => (prev + 1) % THINKING_STEPS.length);
+    }, 2400);
+    return () => clearInterval(interval);
+  }, [isSending]);
+
   useEffect(() => {
     if (externalInputText) {
       setInputText((prev) => {
@@ -76,7 +97,7 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isSending, thinkingStep]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -248,6 +269,37 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
             );
           })
         )}
+
+        {/* Bot Thinking & Editing Active Status Indicator */}
+        {isSending && (
+          <div className="flex gap-2.5 max-w-[85%] self-start flex-row animate-fadeIn">
+            <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-indigo-950 border border-indigo-500/80 text-indigo-300 shadow-sm animate-pulse">
+              <Bot className="w-3.5 h-3.5" />
+            </div>
+
+            <div className="p-3 rounded-lg text-xs leading-relaxed bg-slate-950 text-slate-200 rounded-tl-none border border-indigo-700/60 shadow-lg flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                {React.createElement(THINKING_STEPS[thinkingStep].icon, {
+                  className: "w-3.5 h-3.5 text-indigo-400 animate-spin shrink-0",
+                })}
+                <span className="font-medium text-slate-200">
+                  {THINKING_STEPS[thinkingStep].label}
+                </span>
+              </div>
+
+              {/* Bouncing Dots Indicator */}
+              <div className="flex items-center gap-1.5 pt-0.5">
+                <span className="text-[10px] text-slate-400 font-mono">Editor sedang bekerja</span>
+                <span className="flex gap-1 items-center">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:-0.3s]"></span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:-0.15s]"></span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"></span>
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

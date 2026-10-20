@@ -261,13 +261,35 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
   // 6. Action: Send Chat Message
   const handleSendMessage = async (text: string) => {
     if (!session) return;
+    // Optimistic UI update: tampilkan pesan user langsung seketika
+    const optimisticId = `temp_${Date.now()}`;
+    const optimisticMsg: EditorialMessage = {
+      id: optimisticId,
+      session_id: session.id,
+      sender: "user",
+      text: text,
+      mode: "chat",
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimisticMsg]);
+
     try {
       setIsSendingMessage(true);
       setGlobalError(null);
-      await sendEditorialMessage(session.id, text, "chat");
-      await refreshMessages();
+      const res = await sendEditorialMessage(session.id, text, "chat");
+      await Promise.all([
+        refreshMessages(),
+        refreshVersions(),
+      ]);
+      if (res && res.text && (res.text.includes("Komposisi v") || res.text.includes("diperbarui"))) {
+        setPreviewVersionKey(Date.now());
+        if (videoRef.current) {
+          videoRef.current.load();
+        }
+      }
     } catch (err: any) {
       setGlobalError(err.message || "Gagal mengirim pesan.");
+      await refreshMessages();
     } finally {
       setIsSendingMessage(false);
     }
