@@ -63,7 +63,35 @@ async def create_editorial_session(
     payload: EditorialSessionCreate,
     db: aiosqlite.Connection = Depends(get_db),
 ) -> EditorialSessionResponse:
-    """Initialize a new editorial workspace session for a clip."""
+    """Initialize or reuse an editorial workspace session for a clip."""
+    # Check if an active session already exists for this clip
+    async with db.execute(
+        """
+        SELECT id, clip_id, status, current_version, style_pack,
+               workspace_dir, manifest_path, error_message, failed_stage,
+               created_at, updated_at
+        FROM editorial_sessions
+        WHERE clip_id = ? AND status != 'FAILED'
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        (payload.clip_id,),
+    ) as cur:
+        existing = await cur.fetchone()
+        if existing and Path(existing[5]).exists():
+            return EditorialSessionResponse(
+                id=existing[0],
+                clip_id=existing[1],
+                status=existing[2],
+                current_version=existing[3],
+                style_pack=existing[4],
+                workspace_dir=existing[5],
+                manifest_path=existing[6],
+                error_message=existing[7],
+                failed_stage=existing[8],
+                created_at=existing[9],
+                updated_at=existing[10],
+            )
+
     # Verify clip exists
     async with db.execute(
         "SELECT id, editorial_source_path, video_path FROM clips WHERE id = ?",
@@ -383,13 +411,31 @@ async def trigger_final_render(
 
 
 @router.get("/sessions/{session_id}/preview.mp4")
+@router.head("/sessions/{session_id}/preview.mp4")
 async def stream_preview_video(session_id: str) -> FileResponse:
-    """Stream low-res preview MP4 for web player."""
+    """Stream low-res preview MP4 for web player. Falls back to source video if preview is unrendered."""
     ws_dir = get_workspace_dir(session_id)
     preview_file = ws_dir / "preview.mp4"
-    if not preview_file.exists():
-        raise HTTPException(status_code=404, detail="Preview video not found")
-    return FileResponse(preview_file, media_type="video/mp4")
+    if preview_file.exists():
+        return FileResponse(preview_file, media_type="video/mp4")
+
+    # Fallback to source video if preview has not been rendered yet
+    source_file = ws_dir / "public" / "clip_source.mp4"
+    if source_file.exists():
+        return FileResponse(source_file, media_type="video/mp4")
+
+    raise HTTPException(status_code=404, detail="Preview video not found")
+
+
+@router.get("/sessions/{session_id}/final.mp4")
+@router.head("/sessions/{session_id}/final.mp4")
+async def stream_final_video(session_id: str) -> FileResponse:
+    """Stream final rendered MP4 video."""
+    ws_dir = get_workspace_dir(session_id)
+    final_file = ws_dir / "final.mp4"
+    if not final_file.exists():
+        raise HTTPException(status_code=404, detail="Final video not found")
+    return FileResponse(final_file, media_type="video/mp4")
 
 
 @router.get("/sessions/{session_id}/status", response_model=EditorialStatusResponse)
