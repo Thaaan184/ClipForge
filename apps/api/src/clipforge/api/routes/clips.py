@@ -358,6 +358,7 @@ async def list_finished_clips(
 
 
 @router.get("/finished/{clip_id}/video")
+@router.head("/finished/{clip_id}/video")
 async def stream_finished_clip_video(
     clip_id: str, db: aiosqlite.Connection = Depends(get_db)
 ) -> FileResponse:
@@ -513,6 +514,7 @@ async def stream_clip_video(
 
 
 @router.get("/{clip_id}/thumb")
+@router.head("/{clip_id}/thumb")
 async def stream_clip_thumb(
     clip_id: str, db: aiosqlite.Connection = Depends(get_db)
 ) -> FileResponse:
