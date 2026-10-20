@@ -1,4 +1,23 @@
 services:
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    ports:
+      - "8765:8765"
+    environment:
+      - PORT=8765
+      - HOST=0.0.0.0
+      - NODE_ENV=production
+    volumes:
+      - clipforge_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8765/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
   api:
     build:
       context: .
@@ -14,8 +33,12 @@ services:
       - CF_LLM_BASE_URL=${CF_LLM_BASE_URL:-${LLM_API_BASE:-}}
       - CF_LLM_API_KEY=${CF_LLM_API_KEY:-${LLM_API_KEY:-}}
       - CF_LLM_MODEL=${CF_LLM_MODEL:-gemini-2.5-flash}
+      - REMOTION_WORKER_URL=http://worker:8765
     volumes:
       - clipforge_data:/app/data
+    depends_on:
+      worker:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/healthz"]

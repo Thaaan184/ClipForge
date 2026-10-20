@@ -815,5 +815,36 @@ export async function saveCustomStylePack(pack: any): Promise<any> {
   return res.json();
 }
 
+export async function getDiskUsage(): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/editorial/disk-usage`);
+  if (!res.ok) {
+    throw new Error("Gagal mengambil data penggunaan disk");
+  }
+  return res.json();
+}
+
+export async function triggerCleanup(maxAgeHours = 24.0, dryRun = false): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/editorial/cleanup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ max_age_hours: maxAgeHours, dry_run: dryRun }),
+  });
+  if (!res.ok) {
+    throw new Error("Gagal menjalankan disk cleanup");
+  }
+  return res.json();
+}
+
+export async function retryEditorialSession(sessionId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/retry`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Gagal memulihkan sesi");
+  }
+  return res.json();
+}
+
 
 

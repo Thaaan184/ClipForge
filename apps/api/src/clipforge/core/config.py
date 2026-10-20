@@ -71,5 +71,22 @@ class Settings(BaseSettings):
         default="none", description="Default subtitle visual preset ('none' for clean cuts)"
     )
 
+    # ClipForge v3 Editorial Engine Settings
+    remotion_worker_url: str = Field(
+        default="http://127.0.0.1:8765", description="URL for Remotion worker service"
+    )
+    editorial_max_agent_iterations: int = Field(
+        default=8, description="Max autopilot agent loop iterations"
+    )
+    editorial_preview_concurrency: int = Field(
+        default=4, description="Remotion preview rendering concurrency"
+    )
+    editorial_final_concurrency: int = Field(
+        default=4, description="Remotion final rendering concurrency"
+    )
+    editorial_retention_hours: float = Field(
+        default=24.0, description="Retention window for temporary editorial scratch workspaces"
+    )
+
 
 settings = Settings()

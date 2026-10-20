@@ -6,8 +6,12 @@ import { bundle } from "@remotion/bundler";
 import { selectComposition, renderMedia, renderStill } from "@remotion/renderer";
 
 const PORT = parseInt(process.env.PORT || "8765", 10);
-const HOST = "127.0.0.1";
-const TSC_PATH = "/home/ids/projects/clipforge/apps/web/node_modules/typescript/bin/tsc";
+const HOST = process.env.HOST || "0.0.0.0";
+const TSC_PATH = process.env.TSC_PATH || (
+  fs.existsSync("/home/ids/projects/clipforge/apps/web/node_modules/typescript/bin/tsc")
+    ? "/home/ids/projects/clipforge/apps/web/node_modules/typescript/bin/tsc"
+    : "tsc"
+);
 
 // Safe environment keys allowed in worker (RULES §7.2)
 const ALLOWED_ENV_KEYS = new Set([
@@ -19,6 +23,8 @@ const ALLOWED_ENV_KEYS = new Set([
   "LC_ALL",
   "NODE_ENV",
   "PORT",
+  "HOST",
+  "TSC_PATH",
   "PUPPETEER_EXECUTABLE_PATH",
   "REMOTION_CHROMIUM_EXECUTABLE_PATH",
 ]);

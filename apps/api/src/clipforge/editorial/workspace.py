@@ -29,6 +29,13 @@ def get_workspaces_root() -> Path:
     ws_dir.mkdir(parents=True, exist_ok=True)
     shared_nm = ws_dir / "node_modules"
     worker_nm = WORKER_DIR / "node_modules"
+
+    if shared_nm.is_symlink() and not shared_nm.exists():
+        try:
+            shared_nm.unlink()
+        except Exception:
+            pass
+
     if not shared_nm.exists() and worker_nm.exists():
         try:
             shared_nm.symlink_to(worker_nm.resolve())

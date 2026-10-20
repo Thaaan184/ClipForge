@@ -6,9 +6,11 @@ from typing import Any
 import httpx
 import structlog
 
+from clipforge.core.config import settings
+
 logger = structlog.get_logger(__name__)
 
-WORKER_BASE_URL = "http://127.0.0.1:8765"
+WORKER_BASE_URL = getattr(settings, "remotion_worker_url", "http://127.0.0.1:8765")
 DEFAULT_TIMEOUT = 360.0  # Up to 6 minutes for full renders
 
 
@@ -103,7 +105,10 @@ class RemotionWorkerClient:
                     "concurrency": concurrency,
                 },
             )
-            res.raise_for_status()
+            if res.status_code != 200:
+                err_text = res.text
+                logger.error("worker_render_final_failed", status=res.status_code, body=err_text)
+                raise RuntimeError(f"Remotion worker render failed (HTTP {res.status_code}): {err_text}")
             return res.json()
 
 

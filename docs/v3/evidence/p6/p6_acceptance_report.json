@@ -1,0 +1,231 @@
+{
+  "suite": "ClipForge v3 P6 Acceptance Suite",
+  "timestamp": "2026-10-20T13:27:17.953278+00:00",
+  "duration_s": 236.39,
+  "overall_passed": true,
+  "passed_criteria_count": "8/8",
+  "results": {
+    "criterion_1": {
+      "title": "10 Clips End-to-End Autopilot & Final Render",
+      "passed": true,
+      "success_rate_percent": 100.0,
+      "success_count": "10/10",
+      "avg_duration_s": 21.49,
+      "details": [
+        {
+          "clip_id": "c1_01_ace",
+          "title": "Round 12 Valorant 1v3 Clutch Ace",
+          "style": "gaming_hype",
+          "duration_s": 4.0,
+          "elapsed_s": 20.77,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        },
+        {
+          "clip_id": "c1_02_diff",
+          "title": "Mid Diff Sniper Battle Haven",
+          "style": "hyper_meme",
+          "duration_s": 4.0,
+          "elapsed_s": 22.14,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        },
+        {
+          "clip_id": "c1_03_rush",
+          "title": "B-Site Fast Rush Eco Round",
+          "style": "minimal_clean",
+          "duration_s": 4.0,
+          "elapsed_s": 21.11,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        },
+        {
+          "clip_id": "c1_04_defuse",
+          "title": "Ninja Defuse in Smoke 0.02s Left",
+          "style": "gaming_hype",
+          "duration_s": 4.0,
+          "elapsed_s": 21.79,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        },
+        {
+          "clip_id": "c1_05_flick",
+          "title": "Insane Operator Flick Headshot",
+          "style": "gaming_hype",
+          "duration_s": 4.0,
+          "elapsed_s": 22.12,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        },
+        {
+          "clip_id": "c1_06_troll",
+          "title": "Judge Camping in Hookah Funny",
+          "style": "hyper_meme",
+          "duration_s": 4.0,
+          "elapsed_s": 21.3,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        },
+        {
+          "clip_id": "c1_07_comeback",
+          "title": "Overtime Match Point Final Round",
+          "style": "gaming_hype",
+          "duration_s": 4.0,
+          "elapsed_s": 21.64,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        },
+        {
+          "clip_id": "c1_08_flank",
+          "title": "Backstab Flank 4K Spray Transfer",
+          "style": "minimal_clean",
+          "duration_s": 4.0,
+          "elapsed_s": 21.1,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        },
+        {
+          "clip_id": "c1_09_ult",
+          "title": "Raze Showstopper Triple Kill",
+          "style": "hyper_meme",
+          "duration_s": 4.0,
+          "elapsed_s": 20.91,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        },
+        {
+          "clip_id": "c1_10_win",
+          "title": "Radiant Rank Up Final Reaction",
+          "style": "gaming_hype",
+          "duration_s": 4.0,
+          "elapsed_s": 21.99,
+          "leak_guard_clean": true,
+          "typecheck": true,
+          "loudnorm": true,
+          "qa_passed": true,
+          "success": true,
+          "error": null
+        }
+      ]
+    },
+    "criterion_2": {
+      "title": "Crash Recovery Across 6 Core Stages",
+      "passed": true,
+      "scenarios_tested": 6,
+      "details": [
+        {
+          "stage": "EDITORIAL_DRAFT",
+          "recovered_status": "PREVIEW_READY",
+          "success": true
+        },
+        {
+          "stage": "AGENT_WORKING",
+          "recovered_status": "PREVIEW_READY",
+          "success": true
+        },
+        {
+          "stage": "PREVIEW_READY",
+          "recovered_status": "PREVIEW_READY",
+          "success": true
+        },
+        {
+          "stage": "RENDERING_FINAL",
+          "recovered_status": "AUDIO_NORMALIZING",
+          "success": true
+        },
+        {
+          "stage": "AUDIO_NORMALIZING",
+          "recovered_status": "QA",
+          "success": true
+        },
+        {
+          "stage": "QA",
+          "recovered_status": "QA",
+          "success": true
+        }
+      ]
+    },
+    "criterion_3": {
+      "title": "Docker Compose Services & Configuration",
+      "passed": true,
+      "has_worker_service": true,
+      "has_api_service": true,
+      "has_web_service": true,
+      "error": null
+    },
+    "criterion_4": {
+      "title": "Baseline v2 Detection Metrics & Zero Diff",
+      "passed": true,
+      "zero_diff_vs_legacy_v2": true,
+      "recall_at_3": 1.0,
+      "mean_iou": 0.867
+    },
+    "criterion_5": {
+      "title": "Final Render Performance & Peak Memory",
+      "passed": true,
+      "render_time_s": 17.7,
+      "peak_rss_mb": 143.69,
+      "target_max_render_s": 60.0,
+      "target_max_rss_mb": 2048.0
+    },
+    "criterion_6": {
+      "title": "Extended QA Catches 4 Corrupted Test Cases",
+      "passed": true,
+      "cases": {
+        "black_screen_detected": true,
+        "audio_clipping_detected": true,
+        "duration_mismatch_detected": true,
+        "safezone_violation_detected": true
+      }
+    },
+    "criterion_7": {
+      "title": "Documentation & Operational Runbook",
+      "passed": true,
+      "runbook_exists": true,
+      "architecture_exists": true,
+      "known_issues_exists": true
+    },
+    "criterion_8": {
+      "title": "Prioritized Known Issues Audit",
+      "passed": true,
+      "has_p1_issues": true,
+      "has_p2_issues": true
+    }
+  }
+}

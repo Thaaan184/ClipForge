@@ -49,6 +49,11 @@ from clipforge.editorial.style_packs import (
     save_custom_style_pack,
     StylePackDefinition,
 )
+from clipforge.editorial.disk_cleanup import (
+    get_editorial_disk_usage,
+    prune_stale_workspaces,
+)
+from clipforge.editorial.recovery import recover_session
 
 router = APIRouter(prefix="/api/editorial", tags=["editorial"])
 
@@ -1210,4 +1215,35 @@ async def submit_editorial_script(
         "version": next_ver,
         "commit_sha": sha,
     }
+
+
+# ==========================================
+# 5. P6: Hardening, Recovery & Disk Maintenance
+# ==========================================
+
+
+@router.get("/disk-usage")
+async def get_disk_usage_stats() -> dict[str, Any]:
+    """Retrieve disk breakdown and free space for editorial data."""
+    return get_editorial_disk_usage()
+
+
+@router.post("/cleanup")
+async def trigger_editorial_cleanup(payload: dict[str, Any] = {}) -> dict[str, Any]:
+    """Prune stale temporary workspace directories older than max_age_hours."""
+    max_age_hours = float(payload.get("max_age_hours", 24.0))
+    dry_run = bool(payload.get("dry_run", False))
+    return prune_stale_workspaces(max_age_hours=max_age_hours, dry_run=dry_run)
+
+
+@router.post("/sessions/{session_id}/retry")
+async def retry_or_recover_session(
+    session_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Perform safe, idempotent recovery on a crashed or failed editorial session."""
+    res = await recover_session(session_id, db)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Gagal memulihkan sesi"))
+    return res
 
