@@ -7,11 +7,26 @@ import { selectComposition, renderMedia, renderStill } from "@remotion/renderer"
 
 const PORT = parseInt(process.env.PORT || "8765", 10);
 const HOST = process.env.HOST || "0.0.0.0";
+const localTsc = path.resolve("node_modules/typescript/bin/tsc");
 const TSC_PATH = process.env.TSC_PATH || (
-  fs.existsSync("/home/ids/projects/clipforge/apps/web/node_modules/typescript/bin/tsc")
-    ? "/home/ids/projects/clipforge/apps/web/node_modules/typescript/bin/tsc"
-    : "tsc"
+  fs.existsSync(localTsc)
+    ? localTsc
+    : fs.existsSync("/home/ids/projects/clipforge/apps/web/node_modules/typescript/bin/tsc")
+      ? "/home/ids/projects/clipforge/apps/web/node_modules/typescript/bin/tsc"
+      : "tsc"
 );
+
+function ensureWorkspaceNodeModules(workspaceDir) {
+  try {
+    const wsNm = path.join(workspaceDir, "node_modules");
+    const localNm = path.resolve("node_modules");
+    if (!fs.existsSync(wsNm) && fs.existsSync(localNm)) {
+      fs.symlinkSync(localNm, wsNm, "dir");
+    }
+  } catch (_) {
+    // Non-fatal
+  }
+}
 
 // Safe environment keys allowed in worker (RULES §7.2)
 const ALLOWED_ENV_KEYS = new Set([
@@ -99,6 +114,8 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { success: false, error: "Missing or invalid workspace_dir" });
       }
 
+      ensureWorkspaceNodeModules(workspaceDir);
+
       const tsconfigPath = path.join(workspaceDir, "tsconfig.json");
       if (!fs.existsSync(tsconfigPath)) {
         return sendJson(res, 400, { success: false, error: "tsconfig.json not found in workspace" });
@@ -136,6 +153,8 @@ const server = http.createServer(async (req, res) => {
       if (!workspace_dir || !output_path) {
         return sendJson(res, 400, { success: false, error: "workspace_dir and output_path are required" });
       }
+
+      ensureWorkspaceNodeModules(workspace_dir);
 
       const entryPoint = path.join(workspace_dir, "src/index.ts");
       if (!fs.existsSync(entryPoint)) {
@@ -176,6 +195,8 @@ const server = http.createServer(async (req, res) => {
       if (!workspace_dir || !output_path) {
         return sendJson(res, 400, { success: false, error: "workspace_dir and output_path are required" });
       }
+
+      ensureWorkspaceNodeModules(workspace_dir);
 
       const entryPoint = path.join(workspace_dir, "src/index.ts");
       if (!fs.existsSync(entryPoint)) {
@@ -221,6 +242,8 @@ const server = http.createServer(async (req, res) => {
       if (!workspace_dir || !output_path) {
         return sendJson(res, 400, { success: false, error: "workspace_dir and output_path are required" });
       }
+
+      ensureWorkspaceNodeModules(workspace_dir);
 
       const entryPoint = path.join(workspace_dir, "src/index.ts");
       if (!fs.existsSync(entryPoint)) {

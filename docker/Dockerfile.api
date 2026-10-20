@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
     CF_BIND=0.0.0.0 \
     CF_PORT=8000
 
-# Install runtime dependencies: FFmpeg with libass support and OFL fonts
+# Install runtime dependencies: FFmpeg with libass support, git, and OFL fonts
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libass-dev \
@@ -16,7 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     curl \
     unzip \
+    git \
     && rm -rf /var/lib/apt/lists/*
+
+RUN git config --system --add safe.directory "*"
 
 # Install Deno runtime for yt-dlp 1080p stream extraction
 COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
@@ -38,10 +41,12 @@ RUN pip install --upgrade pip && \
                 "yt-dlp>=2025.1.1" "faster-whisper>=1.0.3" "pillow>=10.2.0" "python-multipart>=0.0.9" \
                 "aiofiles>=24.1.0" "openai>=1.51.0" "pyyaml>=6.0.1"
 
-# Copy API application assets and source
+# Copy API application assets, source, and worker templates
 COPY apps/api/assets/ /app/apps/api/assets/
 COPY apps/api/src/ /app/apps/api/src/
-RUN pip install -e /app/apps/api --no-deps
+COPY apps/worker/template/ /app/apps/worker/template/
+RUN pip install -e /app/apps/api --no-deps && \
+    chown -R appuser:appuser /app/apps
 
 USER appuser
 

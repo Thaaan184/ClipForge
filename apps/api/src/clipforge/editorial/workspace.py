@@ -19,8 +19,34 @@ from clipforge.editorial.models import EditorialManifest
 
 logger = structlog.get_logger(__name__)
 
-TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "worker" / "template"
-WORKER_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "worker"
+def _find_template_dir() -> Path:
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent.parent.parent / "worker" / "template",
+        Path(__file__).resolve().parent.parent.parent.parent.parent / "apps" / "worker" / "template",
+        Path("/app/apps/worker/template"),
+        Path("/home/ids/projects/clipforge/apps/worker/template"),
+    ]
+    for c in candidates:
+        if c.exists() and (c / "src").exists():
+            return c
+    return candidates[0]
+
+
+def _find_worker_dir() -> Path:
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent.parent.parent / "worker",
+        Path(__file__).resolve().parent.parent.parent.parent.parent / "apps" / "worker",
+        Path("/app/apps/worker"),
+        Path("/home/ids/projects/clipforge/apps/worker"),
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return candidates[0]
+
+
+TEMPLATE_DIR = _find_template_dir()
+WORKER_DIR = _find_worker_dir()
 
 
 def get_workspaces_root() -> Path:
