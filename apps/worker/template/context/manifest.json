@@ -1,0 +1,46 @@
+{
+  "manifest_version": 1,
+  "clip": {
+    "id": "template_clip",
+    "source_job_id": "template_job",
+    "duration": 10.0,
+    "fps": 30,
+    "width": 1080,
+    "height": 1920,
+    "source_file": "public/clip_source.mp4"
+  },
+  "transcript": {
+    "language": "id",
+    "words": [
+      { "w": "MOMEN", "start": 1.0, "end": 2.0, "conf": 0.99 },
+      { "w": "CLUTCH", "start": 2.0, "end": 3.5, "conf": 0.99 }
+    ]
+  },
+  "signals": {
+    "peaks": [
+      { "t": 2.0, "score": 0.95, "kinds": ["peak_moment"] }
+    ],
+    "vad_silences": [
+      { "start": 3.5, "end": 10.0 }
+    ]
+  },
+  "scout": {
+    "category": "gameplay_highlight",
+    "title": "Highlight",
+    "hook": "Tonton sampai habis!",
+    "reason": "Gameplay action",
+    "confidence": 0.9
+  },
+  "assets": [],
+  "style_pack": "gaming_hype",
+  "script": {
+    "mode": "none",
+    "text": ""
+  },
+  "safe_zone": {
+    "top": 0.12,
+    "bottom": 0.20,
+    "left": 0.06,
+    "right": 0.12
+  }
+}

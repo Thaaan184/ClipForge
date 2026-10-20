@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from clipforge.api.routes import clips, health, jobs, presets, segments
+from clipforge.api.routes import clips, editorial, health, jobs, presets, segments
 from clipforge.core.config import settings
 from clipforge.core.errors import ClipForgeError, problem_exception_handler
 from clipforge.core.logging import logger, setup_logging
@@ -62,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(clips.router)
     app.include_router(segments.router)
     app.include_router(presets.router)
+    app.include_router(editorial.router)
 
     return app
 

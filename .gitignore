@@ -29,6 +29,8 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.cache/
+apps/**/.cache/
 
 # Node / Frontend
 node_modules/
