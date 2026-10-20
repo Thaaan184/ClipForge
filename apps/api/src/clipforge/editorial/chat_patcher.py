@@ -169,8 +169,9 @@ async def llm_chat_edit(
             )
             if words:
                 word_samples = [
-                    f"'{w.get('text')}' ({w.get('start_s')}s-{w.get('end_s')}s)"
-                    for w in words[:20]
+                    f"'{w.get('w') or w.get('text')}' ({(w.get('start') or w.get('start_s', 0)):.1f}s-{(w.get('end') or w.get('end_s', 0)):.1f}s)"
+                    for w in words[:25]
+                    if w.get('w') or w.get('text')
                 ]
                 manifest_info += f"\nTranskrip kata: {', '.join(word_samples)}"
         except Exception:
