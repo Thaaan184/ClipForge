@@ -157,12 +157,14 @@ async def llm_chat_edit(
     orig_code = comp_path.read_text(encoding="utf-8") if comp_path.exists() else ""
     manifest_path = workspace_dir / "context" / "manifest.json"
     manifest_info = ""
+    assets_list: list[dict[str, Any]] = []
     if manifest_path.exists():
         try:
             m = json.loads(manifest_path.read_text(encoding="utf-8"))
             clip = m.get("clip", {})
             words = m.get("transcript", {}).get("words", [])
             peaks = m.get("signals", {}).get("peaks", [])
+            assets_list = m.get("assets", [])
             manifest_info = (
                 f"Durasi: {clip.get('duration_s', 40)}s ({clip.get('fps', 30)} FPS). "
                 f"Jumlah kata transkrip: {len(words)}. Sinyal puncak: {peaks[:8]}."
@@ -177,14 +179,53 @@ async def llm_chat_edit(
         except Exception:
             pass
 
+    # Read uploaded assets and inspect text/markdown documents for AI context
+    assets_info: list[str] = []
+    documents_context: list[str] = []
+    pub_assets = workspace_dir / "public" / "assets"
+    if pub_assets.exists():
+        for f in sorted(pub_assets.iterdir()):
+            if f.is_file():
+                match_asset = next(
+                    (a for a in assets_list if Path(a.get("path", "")).name == f.name),
+                    None,
+                )
+                label = (match_asset.get("label") if match_asset else "") or f.stem
+                asset_type = (
+                    match_asset.get("type")
+                    if match_asset
+                    else ("document" if f.suffix.lower() in (".txt", ".md") else "media")
+                )
+                rel_path = f"assets/{f.name}"
+
+                if f.suffix.lower() in (".txt", ".md") or asset_type == "document":
+                    try:
+                        doc_text = f.read_text(encoding="utf-8")
+                    except Exception:
+                        try:
+                            doc_text = f.read_text(encoding="latin-1")
+                        except Exception:
+                            doc_text = ""
+                    if len(doc_text) > 25000:
+                        doc_text = doc_text[:25000] + "\n...(dipotong karena melebihi 25.000 karakter)"
+
+                    documents_context.append(
+                        f"=== DOKUMEN ASET @{label} (berkas: {rel_path}) ===\n{doc_text}\n=== AKHIR DOKUMEN @{label} ==="
+                    )
+                    assets_info.append(f"- @{label} [Dokumen Teks]: {rel_path} ({len(doc_text)} karakter)")
+                else:
+                    assets_info.append(f"- @{label} [{asset_type}]: {rel_path}")
+
     system_prompt = (
         "Kamu adalah Lead Video Editor AI untuk ClipForge Editorial Studio. "
         "Gaya bicaramu: Profesional, solutif, taktis, bersahabat, dan santai seperti rekan editor berpengalaman.\n"
         "Aturan:\n"
-        "1. Jika pengguna bertanya, brainstorming, meminta opini, atau mendiskusikan konsep/ide, jawab langsung secara komprehensif tanpa kode (atau dengan snippet kecil sebagai referensi).\n"
-        "2. Jika pengguna meminta perubahan, perbaikan, atau implementasi kode komposisi video Remotion, sertakan kode LENGKAP untuk 'src/Composition.tsx' di dalam blok ```tsx ... ```.\n"
-        "3. Kode TSX wajib valid Remotion vertikal 9:16 (1080x1920, 30fps), dilarang menggunakan process.env / child_process / eval / dynamic import.\n"
-        "4. Selalu jelaskan alasan dan langkah editing yang kamu lakukan."
+        "1. Pengguna dapat melampirkan berkas teks/markdown (.txt, .md) sebagai aset (seperti skrip naskah, beat sheet, narasi, petunjuk editing) dan memanggilnya di chat menggunakan format '@nama_label' (misal: @script, @narasi, @brief).\n"
+        "2. Jika pengguna menyebutkan aset dokumen atau meminta penyelarasan video dengan dokumen tersebut, baca dengan teliti isi dokumen yang tercantum di [Isi Berkas Dokumen Aset]. Analisis perbedaan timing 30fps, transkrip dialog asli Whisper, dan koordinat visual safezone.\n"
+        "3. Jika pengguna bertanya, brainstorming, meminta opini, atau mendiskusikan konsep/ide, jawab langsung secara komprehensif tanpa kode (atau dengan snippet kecil sebagai referensi).\n"
+        "4. Jika pengguna meminta perubahan, perbaikan, atau implementasi kode komposisi video Remotion, sertakan kode LENGKAP untuk 'src/Composition.tsx' di dalam blok ```tsx ... ```.\n"
+        "5. Kode TSX wajib valid Remotion vertikal 9:16 (1080x1920, 30fps), dilarang menggunakan process.env / child_process / eval / dynamic import.\n"
+        "6. Selalu jelaskan alasan dan langkah editing yang kamu lakukan."
     )
 
     user_prompt = f"Pesan Pengguna: {instruction}\n"
@@ -192,6 +233,10 @@ async def llm_chat_edit(
         user_prompt += f"Timestamp terkait: {', '.join(timestamps)}\n"
     if manifest_info:
         user_prompt += f"\n[Konteks Klip]\n{manifest_info}\n"
+    if assets_info:
+        user_prompt += f"\n[Daftar Aset Terlampir di Workspace]:\n" + "\n".join(assets_info) + "\n"
+    if documents_context:
+        user_prompt += f"\n[Isi Berkas Dokumen Aset (.txt/.md) yang Dipanggil/Terlampir]:\n" + "\n\n".join(documents_context) + "\n"
     if orig_code:
         user_prompt += f"\n[src/Composition.tsx Saat Ini]\n```tsx\n{orig_code}\n```\n"
 

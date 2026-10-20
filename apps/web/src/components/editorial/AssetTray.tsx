@@ -17,6 +17,7 @@ import {
   AtSign,
   AlertCircle,
   FileCheck,
+  FileText,
 } from "lucide-react";
 
 interface AssetTrayProps {
@@ -30,6 +31,7 @@ const ALLOWED_EXTS = [
   ".png", ".jpg", ".jpeg", ".webp",
   ".mp3", ".wav", ".m4a", ".aac",
   ".mp4", ".webm", ".mov",
+  ".txt", ".md",
 ];
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
@@ -61,7 +63,7 @@ export const AssetTray: React.FC<AssetTrayProps> = ({
     const ext = "." + file.name.split(".").pop()?.toLowerCase();
     if (!ALLOWED_EXTS.includes(ext)) {
       setErrorMessage(
-        `Format berkas '${ext}' tidak didukung. Format yang diizinkan: gambar (PNG, JPG, WEBP), audio (MP3, WAV, AAC), video (MP4, WEBM, MOV).`
+        `Format berkas '${ext}' tidak didukung. Format yang diizinkan: gambar (PNG, JPG, WEBP), audio (MP3, WAV, AAC), video (MP4, WEBM, MOV), dokumen (TXT, MD).`
       );
       return false;
     }
@@ -168,6 +170,14 @@ export const AssetTray: React.FC<AssetTrayProps> = ({
         </div>
       );
     }
+    if (asset.type === "document" || asset.filename?.endsWith(".txt") || asset.filename?.endsWith(".md")) {
+      return (
+        <div className="w-16 h-16 rounded bg-amber-950/80 border border-amber-700/50 flex flex-col items-center justify-center text-amber-400 shrink-0">
+          <FileText className="w-6 h-6 mb-1" />
+          <span className="text-[9px] font-mono uppercase tracking-wider">DOC</span>
+        </div>
+      );
+    }
     return (
       <div className="w-16 h-16 rounded bg-emerald-950/80 border border-emerald-700/50 flex flex-col items-center justify-center text-emerald-400 shrink-0">
         <VideoIcon className="w-6 h-6 mb-1" />
@@ -196,15 +206,15 @@ export const AssetTray: React.FC<AssetTrayProps> = ({
           <label className="cursor-pointer flex flex-col items-center justify-center gap-2">
             <Upload className="w-7 h-7 text-indigo-400" />
             <div className="text-xs font-semibold text-slate-300">
-              Tarik & letakkan foto, audio/SFX, atau video b-roll di sini
+              Tarik & letakkan foto, audio/SFX, video b-roll, atau berkas script (.txt, .md) di sini
             </div>
             <div className="text-[11px] text-slate-500">
-              Format: PNG, JPG, WEBP, MP3, WAV, MP4 (Maks. 50 MB)
+              Format: PNG, JPG, WEBP, MP3, WAV, MP4, TXT, MD (Maks. 50 MB)
             </div>
             <input
               type="file"
               onChange={handleFileChange}
-              accept=".png,.jpg,.jpeg,.webp,.mp3,.wav,.m4a,.aac,.mp4,.webm,.mov"
+              accept=".png,.jpg,.jpeg,.webp,.mp3,.wav,.m4a,.aac,.mp4,.webm,.mov,.txt,.md"
               className="hidden"
             />
           </label>

@@ -481,12 +481,33 @@ ALLOWED_ASSET_EXTS = {
     ".mp4": "video",
     ".webm": "video",
     ".mov": "video",
+    ".txt": "document",
+    ".md": "document",
 }
 MAX_ASSET_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
 def probe_asset_metadata(file_path: Path) -> dict[str, Any]:
-    """Run ffprobe on uploaded asset to extract technical properties."""
+    """Run ffprobe or text inspector on uploaded asset to extract technical properties."""
+    ext = file_path.suffix.lower()
+    if ext in (".txt", ".md"):
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except Exception:
+            try:
+                content = file_path.read_text(encoding="latin-1")
+            except Exception as exc:
+                return {"valid": False, "error": f"Gagal membaca dokumen teks: {exc}"}
+        return {
+            "valid": True,
+            "duration_s": 0.0,
+            "char_count": len(content),
+            "line_count": len(content.splitlines()),
+            "has_audio": False,
+            "has_video": False,
+            "is_document": True,
+        }
+
     import subprocess
     cmd = [
         "ffprobe",

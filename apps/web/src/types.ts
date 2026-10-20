@@ -320,7 +320,7 @@ export interface EditorialAsset {
   id: string;
   session_id: string;
   filename: string;
-  type: "image" | "audio" | "video";
+  type: "image" | "audio" | "video" | "document";
   path: string;
   label: string;
   hint: string;

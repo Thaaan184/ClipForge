@@ -206,6 +206,26 @@ def index_asset(file_path: Path, asset_type: str) -> dict[str, Any]:
         return index_audio_asset(file_path)
     elif asset_type == "video":
         return index_video_asset(file_path)
+    elif asset_type == "document":
+        try:
+            txt = file_path.read_text(encoding="utf-8")
+        except Exception:
+            try:
+                txt = file_path.read_text(encoding="latin-1")
+            except Exception:
+                txt = ""
+        lines = len(txt.splitlines())
+        chars = len(txt)
+        return {
+            "type": "document",
+            "width": 0,
+            "height": 0,
+            "duration": 0.0,
+            "bpm": None,
+            "char_count": chars,
+            "line_count": lines,
+            "description": f"Dokumen teks ({chars} karakter, {lines} baris)",
+        }
     return {
         "type": asset_type,
         "width": 0,
