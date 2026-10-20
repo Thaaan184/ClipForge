@@ -83,8 +83,16 @@ def audit_workspace_security(workspace_dir: Path) -> dict[str, Any]:
     for root, dirs, files in os.walk(resolved_workspace):
         root_path = Path(root)
 
+        # Skip scanning inside node_modules and .git
+        if "node_modules" in dirs:
+            dirs.remove("node_modules")
+        if ".git" in dirs:
+            dirs.remove(".git")
+
         # Check all entries in current directory for symlink escape
-        for entry_name in dirs + files:
+        for entry_name in list(dirs) + list(files):
+            if entry_name in ("node_modules", ".git"):
+                continue
             entry = root_path / entry_name
             if entry.is_symlink():
                 target = entry.resolve()
