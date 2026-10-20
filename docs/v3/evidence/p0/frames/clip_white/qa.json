@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "errors": [],
+  "checks": {
+    "video_stream": true,
+    "audio_stream": true,
+    "dimensions_1080x1920": true,
+    "pix_fmt_yuv420p": true,
+    "duration_tolerance": true,
+    "av_sync": true
+  },
+  "details": {
+    "duration_s": 5.1,
+    "size_bytes": 2658175,
+    "bitrate": 4169686
+  }
+}
