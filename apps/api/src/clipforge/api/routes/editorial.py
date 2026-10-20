@@ -440,10 +440,10 @@ async def trigger_final_render(
             await db.execute(
                 """
                 UPDATE clips
-                SET video_path = ?, status = 'COMPLETED', updated_at = ?
+                SET video_path = ?, status = 'COMPLETED'
                 WHERE id = ?
                 """,
-                (str(final_out), finish_iso, clip_id),
+                (str(final_out), clip_id),
             )
 
             # Upsert into global finished_clips table
