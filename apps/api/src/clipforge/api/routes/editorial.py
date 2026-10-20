@@ -13,7 +13,9 @@ from fastapi.responses import FileResponse
 
 from clipforge.core.config import settings
 from clipforge.db.connection import get_db
-from clipforge.editorial.leak_guard import audit_workspace_security
+from clipforge.editorial.agent_runtime import run_autopilot_agent
+from clipforge.editorial.asset_indexer import index_asset
+from clipforge.editorial.leak_guard import audit_workspace_security, scan_code_string
 from clipforge.editorial.manifest import build_editorial_manifest, save_manifest
 from clipforge.editorial.models import (
     EditorialAssetResponse,
@@ -477,19 +479,21 @@ async def reload_and_sync_manifest_assets(session_id: str, ws_dir: Path, db: aio
     if manifest_path.exists():
         try:
             m_data = json.loads(manifest_path.read_text(encoding="utf-8"))
-            m_data["assets"] = [
-                {
+            asset_items = []
+            for r in rows:
+                meta = json.loads(r[7]) if r[7] else {}
+                desc = meta.get("description", "")
+                asset_items.append({
                     "id": r[0],
                     "type": r[1],
                     "path": r[2],
                     "label": r[3] or "",
                     "hint": r[4] or "",
-                    "description": "",
+                    "description": desc,
                     "duration": float(r[5] or 0.0),
                     "bpm": float(r[6]) if r[6] is not None else None,
-                }
-                for r in rows
-            ]
+                })
+            m_data["assets"] = asset_items
             manifest_path.write_text(json.dumps(m_data, indent=2), encoding="utf-8")
         except Exception:
             pass
@@ -576,17 +580,21 @@ async def upload_editorial_asset(
         target_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=probe.get("error", "Validasi media gagal"))
 
-    rel_manifest_path = f"public/assets/{sanitized_filename}"
-    now_iso = datetime.now(UTC).isoformat()
-    duration_s = probe.get("duration_s", 0.0)
+    # Run asset indexer (NumPy / SciPy / FFmpeg)
+    index_res = index_asset(target_path, asset_type)
+    bpm = index_res.get("bpm")
+    duration_s = index_res.get("duration", probe.get("duration_s", 0.0))
+    probe.update(index_res)
     meta_json = json.dumps(probe)
     clean_label = label.strip() or Path(raw_filename).stem
+    rel_manifest_path = f"public/assets/{sanitized_filename}"
+    now_iso = datetime.now(UTC).isoformat()
 
     await db.execute(
         """
         INSERT INTO editorial_assets (
-            id, session_id, filename, type, path, label, hint, duration_s, meta_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, session_id, filename, type, path, label, hint, duration_s, bpm, meta_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             asset_id,
@@ -597,6 +605,7 @@ async def upload_editorial_asset(
             clean_label,
             hint.strip(),
             duration_s,
+            bpm,
             meta_json,
             now_iso,
         ),
@@ -615,7 +624,7 @@ async def upload_editorial_asset(
         label=clean_label,
         hint=hint.strip(),
         duration_s=duration_s,
-        bpm=None,
+        bpm=bpm,
         created_at=now_iso,
     )
 
@@ -840,3 +849,166 @@ async def send_editorial_message(
         metadata={},
         created_at=now_iso,
     )
+
+
+@router.post("/sessions/{session_id}/autopilot")
+async def run_editorial_autopilot(
+    session_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Execute Autopilot AI tool-loop: compiles manifest, synthesizes Remotion TSX, typechecks, renders still & preview."""
+    ws_dir = get_workspace_dir(session_id)
+    if not ws_dir.exists():
+        raise HTTPException(status_code=404, detail="Workspace direktori tidak ditemukan")
+
+    # Set status to AGENT_WORKING
+    now_iso = datetime.now(UTC).isoformat()
+    await db.execute(
+        "UPDATE editorial_sessions SET status = 'AGENT_WORKING', updated_at = ? WHERE id = ?",
+        (now_iso, session_id),
+    )
+    await db.commit()
+
+    # Run agent loop
+    result = await run_autopilot_agent(workspace_dir=ws_dir, session_id=session_id)
+
+    if not result.get("success"):
+        err = result.get("error", "Autopilot gagal dijalankan")
+        stage = result.get("stage", "AGENT_WORKING")
+        await db.execute(
+            """
+            UPDATE editorial_sessions
+            SET status = 'FAILED', failed_stage = ?, error_message = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (stage, err, datetime.now(UTC).isoformat(), session_id),
+        )
+        # Record failure message
+        msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+        await db.execute(
+            """
+            INSERT INTO editorial_messages (id, session_id, sender, text, mode, meta_json, created_at)
+            VALUES (?, ?, 'agent', ?, 'autopilot', '{}', ?)
+            """,
+            (msg_id, session_id, f"⚠️ Autopilot gagal pada tahap {stage}: {err}", datetime.now(UTC).isoformat()),
+        )
+        await db.commit()
+        raise HTTPException(status_code=500, detail=err)
+
+    # Success: record new version and update session
+    commit_sha = result["commit_sha"]
+    async with db.execute(
+        "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        next_ver = (row[0] or 1) + 1
+
+    ver_id = f"ver_{commit_sha[:8]}"
+    summary = f"v{next_ver}: Autopilot gaming_hype composition ({result['duration_s']}s)"
+    now_done = datetime.now(UTC).isoformat()
+
+    await db.execute(
+        """
+        INSERT INTO editorial_versions (id, session_id, version_num, commit_sha, summary, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (ver_id, session_id, next_ver, commit_sha, summary, now_done),
+    )
+    await db.execute(
+        """
+        UPDATE editorial_sessions
+        SET status = 'PREVIEW_READY', current_version = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (next_ver, now_done, session_id),
+    )
+
+    # Record agent summary chat message
+    msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+    chat_summary = f"✨ Autopilot selesai ({result['duration_s']}s)! Komposisi v{next_ver} siap ditinjau dengan subtitle kinetic, efek punch zoom pada puncak sinyal, dan hook intro callout."
+    await db.execute(
+        """
+        INSERT INTO editorial_messages (id, session_id, sender, text, mode, meta_json, created_at)
+        VALUES (?, ?, 'agent', ?, 'autopilot', ?, ?)
+        """,
+        (msg_id, session_id, chat_summary, json.dumps(result), now_done),
+    )
+    await db.commit()
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "version": next_ver,
+        "commit_sha": commit_sha,
+        "duration_s": result["duration_s"],
+        "message": chat_summary,
+    }
+
+
+@router.get("/sessions/{session_id}/code")
+async def get_editorial_code(session_id: str) -> dict[str, Any]:
+    """Retrieve current Composition.tsx source code for 'Lihat kode' drawer."""
+    ws_dir = get_workspace_dir(session_id)
+    comp_file = ws_dir / "src" / "Composition.tsx"
+    if not comp_file.exists():
+        raise HTTPException(status_code=404, detail="Composition.tsx tidak ditemukan")
+    return {
+        "session_id": session_id,
+        "path": "src/Composition.tsx",
+        "code": comp_file.read_text(encoding="utf-8"),
+    }
+
+
+@router.post("/sessions/{session_id}/code")
+async def update_editorial_code(
+    session_id: str,
+    payload: dict[str, str],
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Manually update Composition.tsx code from drawer with leak-guard and typecheck."""
+    ws_dir = get_workspace_dir(session_id)
+    code = payload.get("code", "")
+    if not code.strip():
+        raise HTTPException(status_code=400, detail="Kode tidak boleh kosong")
+
+    # Leak guard check
+    errors = scan_code_string(code, "src/Composition.tsx")
+    if errors:
+        raise HTTPException(status_code=400, detail=f"Leak guard violation: {errors}")
+
+    comp_file = ws_dir / "src" / "Composition.tsx"
+    comp_file.write_text(code, encoding="utf-8")
+
+    # Typecheck
+    tc = await worker_client.typecheck(ws_dir)
+    if not tc.get("success"):
+        raise HTTPException(status_code=400, detail=f"Typecheck gagal: {tc.get('errors')}")
+
+    # Re-render preview
+    prev = await worker_client.render_preview(ws_dir, ws_dir / "preview.mp4", concurrency=2)
+    if not prev.get("success"):
+        raise HTTPException(status_code=500, detail=f"Render preview gagal: {prev.get('error')}")
+
+    # Commit version
+    sha = commit_workspace_version(ws_dir, "manual edit via code drawer")
+    async with db.execute(
+        "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        next_ver = (row[0] or 1) + 1
+
+    now_iso = datetime.now(UTC).isoformat()
+    await db.execute(
+        "INSERT INTO editorial_versions (id, session_id, version_num, commit_sha, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (f"ver_{sha[:8]}", session_id, next_ver, sha, f"v{next_ver}: Manual code edit", now_iso),
+    )
+    await db.execute(
+        "UPDATE editorial_sessions SET current_version = ?, status = 'PREVIEW_READY', updated_at = ? WHERE id = ?",
+        (next_ver, now_iso, session_id),
+    )
+    await db.commit()
+
+    return {"success": True, "version": next_ver, "commit_sha": sha}
+

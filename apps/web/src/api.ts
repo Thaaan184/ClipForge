@@ -731,3 +731,37 @@ export async function sendEditorialMessage(
   return res.json();
 }
 
+export async function runEditorialAutopilot(sessionId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/autopilot`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal menjalankan autopilot editorial`);
+  }
+  return res.json();
+}
+
+export async function getEditorialCode(sessionId: string): Promise<{ session_id: string; path: string; code: string }> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/code`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal memuat kode komposisi`);
+  }
+  return res.json();
+}
+
+export async function updateEditorialCode(sessionId: string, code: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Gagal menyimpan kode komposisi`);
+  }
+  return res.json();
+}
+
+

@@ -18,6 +18,9 @@ import {
   getEditorialPreviewVideoUrl,
   getEditorialFinalVideoUrl,
   sendEditorialMessage,
+  runEditorialAutopilot,
+  getEditorialCode,
+  updateEditorialCode,
 } from "../../api";
 import { AssetTray } from "./AssetTray";
 import { VersionHistory } from "./VersionHistory";
@@ -35,6 +38,10 @@ import {
   History,
   Eye,
   RefreshCw,
+  Code2,
+  X,
+  Save,
+  Check,
 } from "lucide-react";
 
 interface EditorialStudioProps {
@@ -68,6 +75,15 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
   const [isFinalRendering, setIsFinalRendering] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isAutopilotWorking, setIsAutopilotWorking] = useState(false);
+  const [reviewPlanToggle, setReviewPlanToggle] = useState(false);
+
+  // Code Viewer / Drawer state
+  const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
+  const [codeContent, setCodeContent] = useState<string>("");
+  const [isSavingCode, setIsSavingCode] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   // Notifications / Errors
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -78,11 +94,9 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
     try {
       setIsLoadingSession(true);
       setGlobalError(null);
-      // Attempt to create or fetch existing session
       const sess = await createEditorialSession(clipId);
       setSession(sess);
 
-      // Load assets, versions, messages in parallel
       const [astList, verList, msgList] = await Promise.all([
         listEditorialAssets(sess.id),
         listEditorialVersions(sess.id),
@@ -102,7 +116,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
     initSession();
   }, [clipId]);
 
-  // 2. Status Polling: keep session state in sync (survives page refresh during render)
+  // 2. Status Polling: keep session state in sync
   useEffect(() => {
     if (!session) return;
 
@@ -121,6 +135,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
           if (st.status === "DONE" || st.status === "FAILED") {
             setIsFinalRendering(false);
+            setIsAutopilotWorking(false);
             clearInterval(pollInterval);
           }
         } catch (err) {
@@ -134,7 +149,6 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
     };
   }, [session?.status, session?.id]);
 
-  // Refresh assets
   const refreshAssets = async () => {
     if (!session) return;
     try {
@@ -145,7 +159,6 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
     }
   };
 
-  // Refresh versions
   const refreshVersions = async () => {
     if (!session) return;
     try {
@@ -153,6 +166,16 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       setVersions(verList);
     } catch (err: any) {
       setGlobalError(err.message || "Gagal memperbarui riwayat versi.");
+    }
+  };
+
+  const refreshMessages = async () => {
+    if (!session) return;
+    try {
+      const msgList = await listEditorialMessages(session.id);
+      setMessages(msgList);
+    } catch (err: any) {
+      setGlobalError(err.message || "Gagal memperbarui riwayat pesan.");
     }
   };
 
@@ -164,7 +187,6 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       setGlobalError(null);
       await renderEditorialPreview(session.id);
       setPreviewVersionKey(Date.now());
-      // Reload video
       if (videoRef.current) {
         videoRef.current.load();
       }
@@ -182,7 +204,6 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       setIsFinalRendering(true);
       setGlobalError(null);
       await renderEditorialFinal(session.id);
-      // Update session status locally to trigger poll
       setSession((prev) => (prev ? { ...prev, status: "RENDERING_FINAL" } : null));
     } catch (err: any) {
       setIsFinalRendering(false);
@@ -217,8 +238,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       setIsSendingMessage(true);
       setGlobalError(null);
       await sendEditorialMessage(session.id, text, "chat");
-      const msgList = await listEditorialMessages(session.id);
-      setMessages(msgList);
+      await refreshMessages();
     } catch (err: any) {
       setGlobalError(err.message || "Gagal mengirim pesan.");
     } finally {
@@ -226,7 +246,71 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
     }
   };
 
-  // 7. Video Player helper: "Komentar di detik ini"
+  // 7. Action: Run Autopilot
+  const handleRunAutopilot = async () => {
+    if (!session) return;
+    try {
+      setIsAutopilotWorking(true);
+      setGlobalError(null);
+      await runEditorialAutopilot(session.id);
+      await Promise.all([
+        refreshVersions(),
+        refreshMessages(),
+      ]);
+      setSession((prev) => (prev ? { ...prev, status: "PREVIEW_READY" } : null));
+      setPreviewVersionKey(Date.now());
+      if (videoRef.current) {
+        videoRef.current.load();
+      }
+    } catch (err: any) {
+      setGlobalError(err.message || "Gagal menjalankan autopilot editorial.");
+    } finally {
+      setIsAutopilotWorking(false);
+    }
+  };
+
+  // 8. Action: View Code
+  const handleViewCode = async () => {
+    if (!session) return;
+    try {
+      setCodeError(null);
+      const res = await getEditorialCode(session.id);
+      setCodeContent(res.code);
+      setIsCodeModalOpen(true);
+    } catch (err: any) {
+      setGlobalError(err.message || "Gagal membaca kode Composition.tsx.");
+    }
+  };
+
+  // 9. Action: Save Edited Code
+  const handleSaveCode = async () => {
+    if (!session) return;
+    try {
+      setIsSavingCode(true);
+      setCodeError(null);
+      await updateEditorialCode(session.id, codeContent);
+      setIsCodeModalOpen(false);
+      await Promise.all([
+        refreshVersions(),
+        refreshMessages(),
+      ]);
+      setPreviewVersionKey(Date.now());
+      if (videoRef.current) {
+        videoRef.current.load();
+      }
+    } catch (err: any) {
+      setCodeError(err.message || "Gagal menyimpan perubahan kode.");
+    } finally {
+      setIsSavingCode(false);
+    }
+  };
+
+  const handleCopyCode = () => {
+    navigator.clipboard.writeText(codeContent);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  };
+
   const handleInsertTimestamp = () => {
     const cur = videoRef.current?.currentTime || 0;
     const m = Math.floor(cur / 60);
@@ -293,12 +377,12 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
                 className={`text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
                   isDone
                     ? "bg-emerald-950 text-emerald-300 border border-emerald-700"
-                    : isRendering
+                    : isRendering || isAutopilotWorking
                     ? "bg-amber-950 text-amber-300 border border-amber-700 animate-pulse"
                     : "bg-indigo-950 text-indigo-300 border border-indigo-700"
                 }`}
               >
-                {session.status}
+                {isAutopilotWorking ? "AUTOPILOT_RUNNING" : session.status}
               </span>
               <span className="text-[11px] font-mono text-slate-400">
                 v{session.current_version}
@@ -310,8 +394,17 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
         {/* Action Controls */}
         <div className="flex items-center gap-2">
           <button
+            onClick={handleViewCode}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition border border-slate-700"
+            title="Lihat atau edit source code Composition.tsx"
+          >
+            <Code2 className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Lihat Kode</span>
+          </button>
+
+          <button
             onClick={handleRenderPreview}
-            disabled={isPreviewRendering || isRendering}
+            disabled={isPreviewRendering || isRendering || isAutopilotWorking}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition border border-slate-700 disabled:opacity-50"
             title="Render ulang pratinjau video low-res"
           >
@@ -321,7 +414,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
           <button
             onClick={handleRenderFinal}
-            disabled={isRendering || isFinalRendering}
+            disabled={isRendering || isFinalRendering || isAutopilotWorking}
             className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-sm disabled:opacity-50"
             title="Render komposisi Remotion final 1080x1920 + normalisasi EBU R128"
           >
@@ -428,15 +521,12 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
               className="w-full h-full object-contain"
             />
 
-            {/* Safe Zone Visual Overlay (RULES §9.6: top 12%, bottom 20%, left 6%, right 12%) */}
+            {/* Safe Zone Visual Overlay */}
             {showSafeZone && (
               <div className="absolute inset-0 pointer-events-none flex flex-col justify-between">
-                {/* Top Safe Margin (12%) */}
                 <div className="h-[12%] bg-red-900/20 border-b border-dashed border-red-500/80 flex items-center justify-center text-[10px] text-red-300 font-mono">
                   Safe Header (12%)
                 </div>
-
-                {/* Middle safe area with left 6% and right 12% margins */}
                 <div className="flex-1 flex justify-between">
                   <div className="w-[6%] bg-red-900/20 border-r border-dashed border-red-500/80 flex items-center justify-center text-[9px] text-red-400 [writing-mode:vertical-lr]">
                     Left 6%
@@ -450,8 +540,6 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
                     UI Right (12%)
                   </div>
                 </div>
-
-                {/* Bottom Safe Margin (20% for TikTok/Shorts captions & bottom bar) */}
                 <div className="h-[20%] bg-red-900/20 border-t border-dashed border-red-500/80 flex items-center justify-center text-[10px] text-red-300 font-mono">
                   Safe Bottom Bar & Bio (20%)
                 </div>
@@ -492,7 +580,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span>Percakapan & Arahan</span>
+              <span>AI Chat & Autopilot</span>
             </button>
 
             <button
@@ -528,7 +616,13 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
                 messages={messages}
                 assets={assets}
                 isSending={isSendingMessage}
+                isAutopilotWorking={isAutopilotWorking || session.status === "AGENT_WORKING"}
                 onSendMessage={handleSendMessage}
+                onRunAutopilot={handleRunAutopilot}
+                onOpenAssetsTab={() => setActiveTab("assets")}
+                onViewCode={handleViewCode}
+                reviewPlanToggle={reviewPlanToggle}
+                onToggleReviewPlan={() => setReviewPlanToggle(!reviewPlanToggle)}
                 externalInputText={externalChatInput}
                 onClearExternalInput={() => setExternalChatInput("")}
               />
@@ -558,6 +652,83 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Code Drawer / Modal (PLAN.md P4 Task 4) */}
+      {isCodeModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Code2 className="w-4 h-4 text-indigo-400" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Composition.tsx Source Code
+                </h3>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  (Remotion TSX Sandbox)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopyCode}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition flex items-center gap-1 font-mono"
+                >
+                  {codeCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : null}
+                  <span>{codeCopied ? "Tersalin!" : "Salin Kode"}</span>
+                </button>
+                <button
+                  onClick={() => setIsCodeModalOpen(false)}
+                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Error Message */}
+            {codeError && (
+              <div className="p-3 bg-red-950 border-b border-red-800 text-xs text-red-200">
+                <span className="font-bold">Gagal Validasi Kode: </span>
+                {codeError}
+              </div>
+            )}
+
+            {/* Editor Textarea */}
+            <div className="flex-1 p-3 bg-slate-950 font-mono text-xs overflow-hidden flex flex-col">
+              <textarea
+                value={codeContent}
+                onChange={(e) => setCodeContent(e.target.value)}
+                className="w-full h-full bg-slate-900 text-slate-200 p-3 rounded border border-slate-800 focus:outline-none focus:border-indigo-500 resize-none font-mono text-[11px] leading-relaxed"
+                rows={22}
+                spellCheck={false}
+              />
+            </div>
+
+            {/* Footer */}
+            <div className="px-4 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs">
+              <div className="text-slate-500 text-[11px]">
+                Validasi Leak-Guard ketat aktif. Dilarang menggunakan env/eval/process.
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsCodeModalOpen(false)}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition"
+                >
+                  Tutup
+                </button>
+                <button
+                  onClick={handleSaveCode}
+                  disabled={isSavingCode}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-bold transition disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingCode ? "Memvalidasi..." : "Simpan & Render Ulang"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

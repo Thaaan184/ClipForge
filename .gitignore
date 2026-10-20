@@ -4,6 +4,7 @@
 
 # Data & media files (never commit)
 data/
+workspaces/
 *.db
 *.mp4
 *.mp3
