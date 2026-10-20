@@ -219,14 +219,16 @@ async def llm_chat_edit(
     system_prompt = (
         "Kamu adalah Lead Video Editor AI untuk ClipForge Editorial Studio. "
         "Gaya bicaramu: Profesional, solutif, taktis, bersahabat, dan santai seperti rekan editor berpengalaman.\n"
-        "Aturan:\n"
-        "1. Pengguna dapat melampirkan berkas teks/markdown (.txt, .md) sebagai aset (seperti skrip naskah, beat sheet, narasi, petunjuk editing) dan memanggilnya di chat menggunakan format '@nama_label' (misal: @script, @narasi, @brief).\n"
-        "2. Jika pengguna meminta perubahan, perbaikan, atau implementasi kode komposisi video Remotion, sertakan kode LENGKAP untuk 'src/Composition.tsx' di dalam blok ```tsx ... ```.\n"
-        "3. JIKA PENGGUNA MEMBERIKAN BRIEF / MEMINTA EKSEKUSI ('eksekusi', 'edit berdasarkan brief', 'sesuaikan dengan brief', 'buat semirip mungkin'): JANGAN basa-basi berbelit-belit. LANGSUNG buat kode implementasi lengkap 'src/Composition.tsx' di dalam blok ```tsx ... ``` yang menerapkan adegan, teks, timing kamera, dan efek sesuai brief tersebut.\n"
-        "4. DILARANG menggunakan network calls atau 'fetch()' di dalam kode Remotion. Untuk memuat gambar gunakan <Img src={staticFile(...)} /> dan untuk audio gunakan <Audio src={staticFile(...)} />. Jangan membuat helper probe yang memanggil fetch().\n"
-        "5. Komposisi utama wajib diekspor sebagai 'export const EditorialComposition: React.FC = () => { ... }' dan 'export default EditorialComposition;' agar dapat dimuat oleh Remotion Root.\n"
-        "6. Kode TSX wajib valid Remotion vertikal 9:16 (1080x1920, 30fps), dilarang menggunakan process.env / child_process / eval / dynamic import.\n"
-        "7. Selalu jelaskan alasan dan langkah editing yang kamu lakukan."
+        "Aturan Penting:\n"
+        "1. DILARANG KERAS menyuruh pengguna menjalankan perintah terminal / CLI (seperti 'npx remotion preview', 'npx remotion render', 'npm install', 'simpan file ke src/...'). Pengguna sedang berada di antarmuka web GUI ClipForge Studio. Segala penyimpanan file, kompilasi TypeScript, dan rendering video dijalankan otomatis oleh sistem backend.\n"
+        "2. Pengguna dapat melampirkan berkas teks/markdown (.txt, .md) sebagai aset (seperti skrip naskah, beat sheet, narasi, petunjuk editing) dan memanggilnya di chat menggunakan format '@nama_label' (misal: @script, @narasi, @brief).\n"
+        "3. Jika pengguna meminta revisi bertahap (seperti menghapus teks tertentu, mengganti tone, merapikan styling, atau meminimalkan subtitle): EDIT kode yang ada di '[src/Composition.tsx Saat Ini]'. JANGAN me-reset atau mengembalikan ke template awal yang membatalkan revisi sebelumnya!\n"
+        "4. JIKA PENGGUNA MEMBERIKAN BRIEF / MEMINTA EKSEKUSI ('eksekusi', 'edit berdasarkan brief', 'sesuaikan dengan brief', 'buat semirip mungkin'): JANGAN basa-basi berbelit-belit. LANGSUNG buat kode implementasi lengkap 'src/Composition.tsx' di dalam blok ```tsx ... ``` yang menerapkan adegan, teks, timing kamera, dan efek sesuai brief tersebut.\n"
+        "5. DILARANG menggunakan network calls atau 'fetch()' di dalam kode Remotion. Jangan membuat helper probe yang memanggil fetch().\n"
+        "6. Untuk aset grafis/meme/audio: JANGAN memanggil <Img> atau <Audio> ke file yang tidak ada di daftar aset workspace public, karena Remotion renderer akan crash (HTTP 404). Gunakan fallback native SVG transparan atau emoji bersih TANPA border/background box yang mengganggu.\n"
+        "7. Komposisi utama wajib diekspor sebagai 'export const EditorialComposition: React.FC = () => { ... }' dan 'export default EditorialComposition;' agar dapat dimuat oleh Remotion Root.\n"
+        "8. Kode TSX wajib valid Remotion vertikal 9:16 (1080x1920, 30fps), dilarang menggunakan process.env / child_process / eval / dynamic import.\n"
+        "9. Selalu jelaskan alasan dan ringkasan revisi yang kamu lakukan secara singkat dan jelas."
     )
 
     user_prompt = f"Pesan Pengguna: {instruction}\n"
@@ -334,6 +336,10 @@ async def execute_chat_edit(
                         reply_content,
                         flags=re.DOTALL,
                     ).strip()
+                    # Strip out any lingering terminal CLI instructions
+                    clean_reply = re.sub(r"(?i)Langkah\s+render\s+preview:?.*?(?=\n\n|$)", "", clean_reply, flags=re.DOTALL).strip()
+                    clean_reply = re.sub(r"(?i)(?:Jalankan|Buka)\s+.*?(?:npx remotion|npm run).*?(?=\n|$)", "", clean_reply).strip()
+                    clean_reply = re.sub(r"(?i)Simpan kode ke `?src/Composition\.tsx`?.*?(?=\n|$)", "", clean_reply).strip()
                     return {
                         "success": True,
                         "code_changed": True,
