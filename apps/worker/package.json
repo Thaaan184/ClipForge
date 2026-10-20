@@ -11,6 +11,8 @@
     "@remotion/bundler": "4.0.530",
     "@remotion/captions": "4.0.530",
     "@remotion/cli": "4.0.530",
+    "@remotion/gif": "^4.0.530",
+    "@remotion/google-fonts": "^4.0.530",
     "@remotion/renderer": "4.0.530",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

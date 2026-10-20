@@ -221,11 +221,12 @@ async def llm_chat_edit(
         "Gaya bicaramu: Profesional, solutif, taktis, bersahabat, dan santai seperti rekan editor berpengalaman.\n"
         "Aturan:\n"
         "1. Pengguna dapat melampirkan berkas teks/markdown (.txt, .md) sebagai aset (seperti skrip naskah, beat sheet, narasi, petunjuk editing) dan memanggilnya di chat menggunakan format '@nama_label' (misal: @script, @narasi, @brief).\n"
-        "2. Jika pengguna menyebutkan aset dokumen atau meminta penyelarasan video dengan dokumen tersebut, baca dengan teliti isi dokumen yang tercantum di [Isi Berkas Dokumen Aset]. Analisis perbedaan timing 30fps, transkrip dialog asli Whisper, dan koordinat visual safezone.\n"
-        "3. Jika pengguna bertanya, brainstorming, meminta opini, atau mendiskusikan konsep/ide, jawab langsung secara komprehensif tanpa kode (atau dengan snippet kecil sebagai referensi).\n"
-        "4. Jika pengguna meminta perubahan, perbaikan, atau implementasi kode komposisi video Remotion, sertakan kode LENGKAP untuk 'src/Composition.tsx' di dalam blok ```tsx ... ```.\n"
-        "5. Kode TSX wajib valid Remotion vertikal 9:16 (1080x1920, 30fps), dilarang menggunakan process.env / child_process / eval / dynamic import.\n"
-        "6. Selalu jelaskan alasan dan langkah editing yang kamu lakukan."
+        "2. Jika pengguna meminta perubahan, perbaikan, atau implementasi kode komposisi video Remotion, sertakan kode LENGKAP untuk 'src/Composition.tsx' di dalam blok ```tsx ... ```.\n"
+        "3. JIKA PENGGUNA MEMBERIKAN BRIEF / MEMINTA EKSEKUSI ('eksekusi', 'edit berdasarkan brief', 'sesuaikan dengan brief', 'buat semirip mungkin'): JANGAN basa-basi berbelit-belit. LANGSUNG buat kode implementasi lengkap 'src/Composition.tsx' di dalam blok ```tsx ... ``` yang menerapkan adegan, teks, timing kamera, dan efek sesuai brief tersebut.\n"
+        "4. DILARANG menggunakan network calls atau 'fetch()' di dalam kode Remotion. Untuk memuat gambar gunakan <Img src={staticFile(...)} /> dan untuk audio gunakan <Audio src={staticFile(...)} />. Jangan membuat helper probe yang memanggil fetch().\n"
+        "5. Komposisi utama wajib diekspor sebagai 'export const EditorialComposition: React.FC = () => { ... }' dan 'export default EditorialComposition;' agar dapat dimuat oleh Remotion Root.\n"
+        "6. Kode TSX wajib valid Remotion vertikal 9:16 (1080x1920, 30fps), dilarang menggunakan process.env / child_process / eval / dynamic import.\n"
+        "7. Selalu jelaskan alasan dan langkah editing yang kamu lakukan."
     )
 
     user_prompt = f"Pesan Pengguna: {instruction}\n"
@@ -296,6 +297,29 @@ async def execute_chat_edit(
 
         if code_match:
             new_code = code_match.group(1).strip()
+
+            # Auto-sanitize any probe helper using fetch(staticFile(...))
+            if "fetch(staticFile(" in new_code:
+                new_code = re.sub(
+                    r"const probe = async \(.*?\).*?return.*?\n\};",
+                    "const AVAILABLE_ASSETS: Record<string, boolean> = { 'preview.mp4': true, 'clip_source.mp4': true };",
+                    new_code,
+                    flags=re.DOTALL,
+                )
+                new_code = re.sub(
+                    r"Promise\.all\(MANIFEST\.map\(async \(p\) => \[p, await probe\(p\)\] as const\)\)\.then\(.*?\);",
+                    "setFound(AVAILABLE_ASSETS); setLoaded(true);",
+                    new_code,
+                    flags=re.DOTALL,
+                )
+
+            # Ensure EditorialComposition export exists for Remotion Root
+            if "export const EditorialComposition" not in new_code and "EditorialComposition" not in new_code:
+                fc_match = re.search(r"export\s+const\s+([A-Za-z0-9_]+)\s*:\s*React\.FC", new_code)
+                if fc_match:
+                    main_name = fc_match.group(1)
+                    new_code += f"\n\nexport const EditorialComposition: React.FC = {main_name};\nexport default EditorialComposition;\n"
+
             errors = scan_code_string(new_code, "src/Composition.tsx")
             if not errors:
                 comp_path.write_text(new_code, encoding="utf-8")

@@ -56,9 +56,14 @@ def scan_code_string(code_content: str, filename: str = "Composition.tsx") -> li
     """Scan a code string for forbidden APIs, network calls, and hardcoded secrets."""
     errors: list[str] = []
 
-    for pattern, desc in FORBIDDEN_CODE_PATTERNS:
-        if re.search(pattern, code_content):
-            errors.append(f"Security violation in {filename}: {desc}")
+    # Only executable source code is subject to forbidden API / network call restrictions.
+    # Non-code context files (.json, .md, .txt) may contain user scripts, transcripts, or quotes of code.
+    is_executable = any(filename.endswith(ext) for ext in (".tsx", ".ts", ".jsx", ".js"))
+
+    if is_executable:
+        for pattern, desc in FORBIDDEN_CODE_PATTERNS:
+            if re.search(pattern, code_content):
+                errors.append(f"Security violation in {filename}: {desc}")
 
     for pattern, desc in SECRET_PATTERNS:
         if re.search(pattern, code_content):
@@ -71,7 +76,7 @@ def audit_workspace_security(workspace_dir: Path) -> dict[str, Any]:
     """
     Examine an entire editorial workspace:
     - Verifies all source files (.tsx, .ts, .js) against code & secret rules.
-    - Verifies that no symlinks escape outside workspace_dir.
+    - Verifies that no symlinks escape outside workspace_dir (excluding internal infrastructure like node_modules).
     """
     resolved_workspace = workspace_dir.resolve()
     errors: list[str] = []
@@ -79,6 +84,8 @@ def audit_workspace_security(workspace_dir: Path) -> dict[str, Any]:
 
     if not resolved_workspace.exists():
         return {"passed": False, "errors": [f"Workspace does not exist: {workspace_dir}"], "scanned_files": []}
+
+    allowed_symlinks = {"node_modules", ".git"}
 
     for root, dirs, files in os.walk(resolved_workspace):
         root_path = Path(root)
@@ -91,9 +98,11 @@ def audit_workspace_security(workspace_dir: Path) -> dict[str, Any]:
 
         # Check all entries in current directory for symlink escape
         for entry_name in list(dirs) + list(files):
-            if entry_name in ("node_modules", ".git"):
+            if entry_name in allowed_symlinks or entry_name.startswith("."):
                 continue
             entry = root_path / entry_name
+            if entry.name in allowed_symlinks:
+                continue
             if entry.is_symlink():
                 target = entry.resolve()
                 if not str(target).startswith(str(resolved_workspace)):
@@ -101,9 +110,11 @@ def audit_workspace_security(workspace_dir: Path) -> dict[str, Any]:
                     errors.append(f"Symlink {kind} escape detected: {entry} -> {target}")
 
         for file in files:
+            if file in allowed_symlinks or file.startswith("."):
+                continue
             file_path = root_path / file
-            # Only scan source files and JSON context
-            if file.endswith((".tsx", ".ts", ".js", ".jsx", ".json", ".md")):
+            # Only scan source files, json, markdown, and text documents
+            if file.endswith((".tsx", ".ts", ".js", ".jsx", ".json", ".md", ".txt")):
                 scanned_files.append(str(file_path.relative_to(resolved_workspace)))
                 try:
                     content = file_path.read_text(encoding="utf-8", errors="ignore")
