@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app/apps/worker
 
 COPY apps/worker/package*.json ./
-RUN npm install
+RUN npm install --include=dev
 
 COPY apps/worker/ ./
 
