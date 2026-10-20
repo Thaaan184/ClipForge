@@ -293,6 +293,38 @@ async def list_finished_clips(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> list[FinishedClipResponse]:
     """Retrieve all permanently finished and saved editorial clips."""
+    # Auto-sync any completed editorial sessions not yet recorded in finished_clips
+    try:
+        async with db.execute(
+            """
+            SELECT es.id, es.clip_id, c.job_id, j.title, ev.final_path, c.duration_s, es.updated_at
+            FROM editorial_sessions es
+            LEFT JOIN clips c ON es.clip_id = c.id
+            LEFT JOIN jobs j ON c.job_id = j.id
+            LEFT JOIN editorial_versions ev ON es.id = ev.session_id AND es.current_version = ev.version_num
+            WHERE es.status = 'DONE' AND es.clip_id NOT IN (SELECT clip_id FROM finished_clips WHERE clip_id IS NOT NULL)
+            """
+        ) as cur_sync:
+            done_sessions = await cur_sync.fetchall()
+            for ds in done_sessions:
+                sess_id, c_id, j_id, j_title, f_path, dur, u_at = ds
+                if c_id and f_path and Path(f_path).exists():
+                    fc_id = f"fc_{c_id.replace('-', '')[:10]}"
+                    await db.execute(
+                        """
+                        INSERT INTO finished_clips (
+                            id, clip_id, job_id, project_title, video_path, thumb_path, srt_path,
+                            duration_s, width, height, subtitles_json, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, 1080, 1920, '[]', ?, ?)
+                        """,
+                        (fc_id, c_id, j_id, j_title or "ClipForge Proyek", f_path, dur or 40.0, u_at, u_at),
+                    )
+            if done_sessions:
+                await db.commit()
+    except Exception:
+        pass
+
     query = """
         SELECT id, clip_id, job_id, project_title, video_path, thumb_path, srt_path,
                duration_s, width, height, subtitles_json, created_at, updated_at,

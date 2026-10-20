@@ -54,11 +54,13 @@ import {
 interface EditorialStudioProps {
   clipId: string;
   onBack: () => void;
+  onNavigateToResults?: () => void;
 }
 
 export const EditorialStudio: React.FC<EditorialStudioProps> = ({
   clipId,
   onBack,
+  onNavigateToResults,
 }) => {
   // Session State
   const [session, setSession] = useState<EditorialSession | null>(null);
@@ -69,6 +71,9 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
   // Active Tab: "chat" | "assets" | "versions"
   const [activeTab, setActiveTab] = useState<"chat" | "assets" | "versions">("chat");
+
+  // Mobile View Switcher: "player" | "chat" | "assets" | "versions"
+  const [mobileView, setMobileView] = useState<"player" | "chat" | "assets" | "versions">("player");
 
   // Video Player & Interaction State
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -445,9 +450,9 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
   if (isLoadingSession) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[500px] text-slate-300 gap-3">
-        <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin" />
-        <span className="text-sm font-semibold">Menyiapkan Editorial Studio...</span>
+      <div className="flex flex-col items-center justify-center min-h-[500px] text-muted gap-3 font-mono">
+        <RefreshCw className="w-8 h-8 text-action animate-spin" />
+        <span className="text-xs uppercase tracking-wider font-bold text-copy">Menyiapkan Editorial Studio...</span>
       </div>
     );
   }
@@ -461,26 +466,26 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
     session?.status === "QA";
 
   return (
-    <div className="flex flex-col gap-4 text-slate-200 w-full max-w-7xl mx-auto pb-12">
+    <div className="flex flex-col gap-4 text-copy w-full max-w-7xl mx-auto pb-12 font-sans">
       {/* Top Bar Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-3.5 rounded-xl shadow-lg">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-card border border-line p-3.5 shadow-md">
+        <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={onBack}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface hover:border-action text-copy border border-line text-xs font-bold uppercase tracking-wider transition-colors"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4 text-action" />
             <span>Kembali ke Klip</span>
           </button>
 
-          <div className="h-4 w-px bg-slate-700 hidden sm:block" />
+          <div className="h-4 w-px bg-line hidden sm:block" />
 
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-yellow-400" />
-            <h1 className="text-sm font-bold text-white tracking-wide">
+            <Sparkles className="w-4 h-4 text-action" />
+            <h1 className="text-sm font-extrabold text-copy tracking-wider uppercase font-display">
               Editorial Studio
             </h1>
-            <span className="text-xs font-mono text-slate-400">
+            <span className="text-xs font-mono text-muted">
               [{clipId.slice(0, 10)}]
             </span>
           </div>
@@ -488,17 +493,17 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           {session && (
             <div className="flex items-center gap-2">
               <span
-                className={`text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                className={`text-[10px] font-mono font-bold px-2 py-0.5 uppercase tracking-wider ${
                   isDone
                     ? "bg-emerald-950 text-emerald-300 border border-emerald-700"
                     : isRendering || isAutopilotWorking
-                    ? "bg-amber-950 text-amber-300 border border-amber-700 animate-pulse"
-                    : "bg-indigo-950 text-indigo-300 border border-indigo-700"
+                    ? "bg-action/20 text-action border border-action animate-pulse"
+                    : "bg-surface text-copy border border-line"
                 }`}
               >
                 {isAutopilotWorking ? "AUTOPILOT_RUNNING" : session.status}
               </span>
-              <span className="text-[11px] font-mono text-slate-400">
+              <span className="text-[11px] font-mono text-muted">
                 v{session.current_version}
               </span>
             </div>
@@ -506,27 +511,27 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Style Pack Selector */}
-          <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2.5 py-1">
-            <Palette className="w-3.5 h-3.5 text-pink-400" />
+          <div className="flex items-center gap-1.5 bg-surface border border-line px-2.5 py-1">
+            <Palette className="w-3.5 h-3.5 text-action" />
             <select
               value={selectedStylePack}
               disabled={isApplyingStyle || isRendering || isAutopilotWorking}
               onChange={(e) => handleApplyStyle(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-slate-200 focus:outline-none cursor-pointer"
+              className="bg-transparent text-xs font-bold text-copy focus:outline-none cursor-pointer uppercase font-mono"
             >
               {stylePacks.length > 0 ? (
                 stylePacks.map((sp) => (
-                  <option key={sp.name} value={sp.name} className="bg-slate-900 text-slate-200">
+                  <option key={sp.name} value={sp.name} className="bg-card text-copy">
                     {sp.label || sp.name}
                   </option>
                 ))
               ) : (
                 <>
-                  <option value="gaming_hype" className="bg-slate-900 text-slate-200">Gaming Hype</option>
-                  <option value="minimal_clean" className="bg-slate-900 text-slate-200">Minimal Clean</option>
-                  <option value="hyper_meme" className="bg-slate-900 text-slate-200">Hyper Meme</option>
+                  <option value="gaming_hype" className="bg-card text-copy">Gaming Hype</option>
+                  <option value="minimal_clean" className="bg-card text-copy">Minimal Clean</option>
+                  <option value="hyper_meme" className="bg-card text-copy">Hyper Meme</option>
                 </>
               )}
             </select>
@@ -535,36 +540,36 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           {/* Simpan Gaya Ini */}
           <button
             onClick={() => setIsSaveStyleModalOpen(true)}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition border border-slate-700"
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-surface hover:border-action text-copy border border-line text-xs font-bold tracking-wider uppercase transition-colors"
             title="Simpan preset gaya saat ini"
           >
-            <BookmarkPlus className="w-3.5 h-3.5 text-pink-400" />
+            <BookmarkPlus className="w-3.5 h-3.5 text-action" />
             <span className="hidden md:inline">Simpan Gaya</span>
           </button>
 
           <button
             onClick={handleViewCode}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition border border-slate-700"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface hover:border-action text-copy border border-line text-xs font-bold tracking-wider uppercase transition-colors"
             title="Lihat atau edit source code Composition.tsx"
           >
-            <Code2 className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Lihat Kode</span>
+            <Code2 className="w-3.5 h-3.5 text-action" />
+            <span className="hidden sm:inline">Lihat Kode</span>
           </button>
 
           <button
             onClick={handleRenderPreview}
             disabled={isPreviewRendering || isRendering || isAutopilotWorking}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition border border-slate-700 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface hover:border-action text-action border border-line text-xs font-bold tracking-wider uppercase transition-colors disabled:opacity-50"
             title="Render ulang pratinjau video low-res"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isPreviewRendering ? "animate-spin text-indigo-400" : ""}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isPreviewRendering ? "animate-spin text-action" : ""}`} />
             <span>{isPreviewRendering ? "Merender..." : "Render Preview"}</span>
           </button>
 
           <button
             onClick={handleRenderFinal}
             disabled={isRendering || isFinalRendering || isAutopilotWorking}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-sm disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-action hover:bg-action-hover text-bg font-extrabold text-xs uppercase tracking-wider transition-colors shadow-sm disabled:opacity-50"
             title="Render komposisi Remotion final 1080x1920 + normalisasi EBU R128"
           >
             <Play className={`w-3.5 h-3.5 fill-current ${isRendering ? "animate-pulse" : ""}`} />
@@ -576,30 +581,42 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           </button>
 
           {isDone && (
-            <a
-              href={finalUrl}
-              download={`${session?.id}_final.mp4`}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow-sm"
-              title="Unduh video hasil render final 1080x1920"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Unduh Final (.mp4)</span>
-            </a>
+            <div className="flex items-center gap-2">
+              {onNavigateToResults && (
+                <button
+                  onClick={onNavigateToResults}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-action hover:bg-action-hover text-bg text-xs font-extrabold uppercase tracking-wider transition-colors"
+                  title="Lihat klip di tab Hasil Klip"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>Buka Hasil Klip</span>
+                </button>
+              )}
+              <a
+                href={finalUrl}
+                download={`${session?.id}_final.mp4`}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-line hover:border-action text-copy text-xs font-bold uppercase tracking-wider transition-colors"
+                title="Unduh video hasil render final 1080x1920"
+              >
+                <Download className="w-3.5 h-3.5 text-action" />
+                <span>Unduh MP4</span>
+              </a>
+            </div>
           )}
         </div>
       </div>
 
       {/* Global Error Notice */}
       {globalError && (
-        <div className="p-3 bg-red-950/70 border border-red-800 rounded-lg text-xs text-red-200 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+        <div className="p-3 bg-err/10 border border-err/60 text-xs text-err flex items-start gap-2 font-mono">
+          <AlertTriangle className="w-4 h-4 text-err shrink-0 mt-0.5" />
           <div className="flex-1">
             <span className="font-bold">Terjadi Kesalahan: </span>
             {globalError}
           </div>
           <button
             onClick={() => setGlobalError(null)}
-            className="text-red-400 hover:text-red-200 text-xs font-bold ml-2"
+            className="text-err hover:underline text-xs font-bold ml-2 uppercase"
           >
             Tutup
           </button>
@@ -608,41 +625,96 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
       {/* Final Done Success Card */}
       {isDone && (
-        <div className="p-3 bg-emerald-950/50 border border-emerald-800/80 rounded-lg flex items-center justify-between text-xs text-emerald-200">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+        <div className="p-3.5 bg-card border border-action text-copy flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-action shrink-0" />
             <div>
-              <span className="font-bold">Video Final Siap Diekspor! </span>
-              Lolos QA: Resolusi 1080×1920, normalisasi audio EBU R128 (-16 LUFS, TP ≤ -1.5 dBFS).
+              <span className="font-bold text-action uppercase tracking-wide">Video Final Siap! </span>
+              Lolos QA: Resolusi 1080×1920, audio EBU R128 (-16 LUFS). Video otomatis masuk ke tab Hasil Klip.
             </div>
           </div>
-          <a
-            href={finalUrl}
-            download={`${session?.id}_final.mp4`}
-            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold transition"
-          >
-            Download Sekarang
-          </a>
+          <div className="flex items-center gap-2 shrink-0">
+            {onNavigateToResults && (
+              <button
+                onClick={onNavigateToResults}
+                className="px-3.5 py-1.5 bg-action hover:bg-action-hover text-bg font-extrabold text-xs uppercase tracking-wider transition-colors"
+              >
+                Buka di Hasil Klip
+              </button>
+            )}
+            <a
+              href={finalUrl}
+              download={`${session?.id}_final.mp4`}
+              className="px-3 py-1.5 bg-surface border border-line hover:border-action text-copy font-bold text-xs uppercase tracking-wider transition-colors"
+            >
+              Download Sekarang
+            </a>
+          </div>
         </div>
       )}
+
+      {/* Mobile View Switcher (Visible only on < lg) */}
+      <div className="flex lg:hidden items-center bg-card border border-line p-1 text-xs font-mono font-bold uppercase tracking-wider">
+        <button
+          onClick={() => setMobileView("player")}
+          className={`flex-1 py-2 text-center transition-colors ${
+            mobileView === "player" ? "bg-action text-bg" : "text-muted hover:text-copy"
+          }`}
+        >
+          🎬 Player
+        </button>
+        <button
+          onClick={() => {
+            setMobileView("chat");
+            setActiveTab("chat");
+          }}
+          className={`flex-1 py-2 text-center transition-colors ${
+            mobileView === "chat" ? "bg-action text-bg" : "text-muted hover:text-copy"
+          }`}
+        >
+          💬 Chat {messages.length > 0 && `(${messages.length})`}
+        </button>
+        <button
+          onClick={() => {
+            setMobileView("assets");
+            setActiveTab("assets");
+          }}
+          className={`flex-1 py-2 text-center transition-colors ${
+            mobileView === "assets" ? "bg-action text-bg" : "text-muted hover:text-copy"
+          }`}
+        >
+          📁 Aset {assets.length > 0 && `(${assets.length})`}
+        </button>
+        <button
+          onClick={() => {
+            setMobileView("versions");
+            setActiveTab("versions");
+          }}
+          className={`flex-1 py-2 text-center transition-colors ${
+            mobileView === "versions" ? "bg-action text-bg" : "text-muted hover:text-copy"
+          }`}
+        >
+          ⏱️ Versi
+        </button>
+      </div>
 
       {/* Main Studio Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch lg:h-[760px]">
         {/* Left Column: 9:16 Preview Player & Controls (5 Cols) */}
-        <div className="lg:col-span-5 flex flex-col justify-between h-full bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-md">
+        <div className={`${mobileView === "player" ? "flex" : "hidden"} lg:flex lg:col-span-5 flex-col justify-between h-full bg-card border border-line p-4 shadow-md`}>
           <div className="flex items-center justify-between shrink-0 mb-2">
             <div className="flex items-center gap-2">
-              <Eye className="w-4 h-4 text-indigo-400" />
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+              <Eye className="w-4 h-4 text-action" />
+              <span className="text-xs font-bold uppercase tracking-wider text-copy font-mono">
                 Pratinjau 9:16 (Preview)
               </span>
             </div>
             <button
               onClick={() => setShowSafeZone(!showSafeZone)}
-              className={`text-[11px] px-2.5 py-1 rounded font-medium transition border ${
+              className={`text-[11px] px-2.5 py-1 font-bold uppercase font-mono transition-colors border ${
                 showSafeZone
-                  ? "bg-indigo-950 text-indigo-300 border-indigo-700"
-                  : "bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200"
+                  ? "bg-action text-bg border-action"
+                  : "bg-surface text-muted border-line hover:text-copy hover:border-action"
               }`}
             >
               {showSafeZone ? "Sembunyikan Safe Zone" : "Overlay Safe Zone"}
@@ -650,7 +722,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           </div>
 
           {/* Video Canvas Container (9:16 Aspect Ratio) */}
-          <div className="relative w-full flex-1 min-h-0 aspect-[9/16] max-h-[640px] mx-auto bg-black rounded-lg overflow-hidden border border-slate-800 shadow-inner flex items-center justify-center">
+          <div className="relative w-full flex-1 min-h-0 aspect-[9/16] max-h-[640px] mx-auto bg-black overflow-hidden border border-line shadow-inner flex items-center justify-center">
             <video
               ref={videoRef}
               src={previewUrl}
@@ -673,23 +745,23 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
             {/* Safe Zone Visual Overlay */}
             {showSafeZone && (
               <div className="absolute inset-0 pointer-events-none flex flex-col justify-between">
-                <div className="h-[12%] bg-red-900/20 border-b border-dashed border-red-500/80 flex items-center justify-center text-[10px] text-red-300 font-mono">
+                <div className="h-[12%] bg-err/20 border-b border-dashed border-err flex items-center justify-center text-[10px] text-err font-mono">
                   Safe Header (12%)
                 </div>
                 <div className="flex-1 flex justify-between">
-                  <div className="w-[6%] bg-red-900/20 border-r border-dashed border-red-500/80 flex items-center justify-center text-[9px] text-red-400 [writing-mode:vertical-lr]">
+                  <div className="w-[6%] bg-err/20 border-r border-dashed border-err flex items-center justify-center text-[9px] text-err font-mono [writing-mode:vertical-lr]">
                     Left 6%
                   </div>
                   <div className="flex-1 flex items-center justify-center">
-                    <div className="border border-emerald-500/50 rounded px-2 py-1 bg-black/40 text-[10px] text-emerald-300 font-mono">
+                    <div className="border border-action rounded-none px-2 py-1 bg-black/80 text-[10px] text-action font-mono">
                       Zona Aman Teks & Subtitle
                     </div>
                   </div>
-                  <div className="w-[12%] bg-red-900/20 border-l border-dashed border-red-500/80 flex items-center justify-center text-[9px] text-red-400 [writing-mode:vertical-lr]">
+                  <div className="w-[12%] bg-err/20 border-l border-dashed border-err flex items-center justify-center text-[9px] text-err font-mono [writing-mode:vertical-lr]">
                     UI Right (12%)
                   </div>
                 </div>
-                <div className="h-[20%] bg-red-900/20 border-t border-dashed border-red-500/80 flex items-center justify-center text-[10px] text-red-300 font-mono">
+                <div className="h-[20%] bg-err/20 border-t border-dashed border-err flex items-center justify-center text-[10px] text-err font-mono">
                   Safe Bottom Bar & Bio (20%)
                 </div>
               </div>
@@ -697,9 +769,9 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           </div>
 
           {/* Time & Comment in Current Second Button */}
-          <div className="flex items-center justify-between pt-2 shrink-0 border-t border-slate-800/60 mt-2">
-            <div className="flex items-center gap-2 text-xs font-mono text-slate-300">
-              <Clock className="w-3.5 h-3.5 text-slate-500" />
+          <div className="flex items-center justify-between pt-2 shrink-0 border-t border-line mt-2">
+            <div className="flex items-center gap-2 text-xs font-mono text-copy">
+              <Clock className="w-3.5 h-3.5 text-muted" />
               <span>
                 {formatSeconds(currentTime)} / {formatSeconds(videoDuration)}
               </span>
@@ -707,25 +779,28 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
             <button
               onClick={handleInsertTimestamp}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950 hover:bg-indigo-900 border border-indigo-700/80 text-indigo-300 rounded-lg text-xs font-semibold transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface hover:border-action border border-line text-action text-xs font-bold uppercase font-mono tracking-wider transition-colors"
               title="Sisipkan detik saat ini ke input chat"
             >
-              <Clock className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Komentar di detik ini [{formatSeconds(currentTime)}]</span>
+              <Clock className="w-3.5 h-3.5 text-action" />
+              <span>Komentar [{formatSeconds(currentTime)}]</span>
             </button>
           </div>
         </div>
 
         {/* Right Column: Studio Panels & Chat (7 Cols) */}
-        <div className="lg:col-span-7 flex flex-col gap-3 h-full min-h-0">
+        <div className={`${mobileView !== "player" ? "flex" : "hidden"} lg:flex lg:col-span-7 flex-col gap-3 h-full min-h-0`}>
           {/* Studio Navigation Tabs */}
-          <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 p-1.5 rounded-xl shrink-0">
+          <div className="flex items-center gap-2 bg-card border border-line p-1.5 shrink-0">
             <button
-              onClick={() => setActiveTab("chat")}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition ${
+              onClick={() => {
+                setActiveTab("chat");
+                setMobileView("chat");
+              }}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 text-xs font-extrabold uppercase font-mono tracking-wider transition-colors ${
                 activeTab === "chat"
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                  ? "bg-action text-bg"
+                  : "text-muted hover:text-copy bg-surface border border-line"
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
@@ -733,32 +808,38 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
             </button>
 
             <button
-              onClick={() => setActiveTab("assets")}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition ${
+              onClick={() => {
+                setActiveTab("assets");
+                setMobileView("assets");
+              }}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 text-xs font-extrabold uppercase font-mono tracking-wider transition-colors ${
                 activeTab === "assets"
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                  ? "bg-action text-bg"
+                  : "text-muted hover:text-copy bg-surface border border-line"
               }`}
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              <span>Aset Tambahan ({assets.length})</span>
+              <span>Aset ({assets.length})</span>
             </button>
 
             <button
-              onClick={() => setActiveTab("versions")}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition ${
+              onClick={() => {
+                setActiveTab("versions");
+                setMobileView("versions");
+              }}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 text-xs font-extrabold uppercase font-mono tracking-wider transition-colors ${
                 activeTab === "versions"
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                  ? "bg-action text-bg"
+                  : "text-muted hover:text-copy bg-surface border border-line"
               }`}
             >
               <History className="w-3.5 h-3.5" />
-              <span>Riwayat Versi ({versions.length})</span>
+              <span>Versi ({versions.length})</span>
             </button>
           </div>
 
           {/* Active Tab Content Area */}
-          <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl shadow-md flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="bg-card border border-line p-3 shadow-md flex-1 min-h-0 flex flex-col overflow-hidden">
             {session && activeTab === "chat" && (
               <EditorialChat
                 sessionId={session.id}
@@ -768,7 +849,10 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
                 isAutopilotWorking={isAutopilotWorking || session.status === "AGENT_WORKING"}
                 onSendMessage={handleSendMessage}
                 onRunAutopilot={handleRunAutopilot}
-                onOpenAssetsTab={() => setActiveTab("assets")}
+                onOpenAssetsTab={() => {
+                  setActiveTab("assets");
+                  setMobileView("assets");
+                }}
                 onViewCode={handleViewCode}
                 onOpenScriptModal={() => setIsScriptModalOpen(true)}
                 reviewPlanToggle={reviewPlanToggle}
@@ -786,6 +870,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
                 onMentionAsset={(label) => {
                   setExternalChatInput(`@${label}`);
                   setActiveTab("chat");
+                  setMobileView("chat");
                 }}
               />
             )}
@@ -806,29 +891,29 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       {/* Code Drawer / Modal (PLAN.md P4 Task 4) */}
       {isCodeModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+          <div className="bg-card border border-line w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden font-sans">
             {/* Header */}
-            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+            <div className="px-4 py-3 bg-surface border-b border-line flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Code2 className="w-4 h-4 text-indigo-400" />
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                <Code2 className="w-4 h-4 text-action" />
+                <h3 className="text-xs font-bold text-copy uppercase tracking-wider font-mono">
                   Composition.tsx Source Code
                 </h3>
-                <span className="text-[10px] text-slate-500 font-mono">
+                <span className="text-[10px] text-muted font-mono">
                   (Remotion TSX Sandbox)
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleCopyCode}
-                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition flex items-center gap-1 font-mono"
+                  className="px-2.5 py-1 bg-surface hover:border-action border border-line text-copy text-xs transition-colors flex items-center gap-1 font-mono uppercase"
                 >
-                  {codeCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : null}
+                  {codeCopied ? <Check className="w-3.5 h-3.5 text-action" /> : null}
                   <span>{codeCopied ? "Tersalin!" : "Salin Kode"}</span>
                 </button>
                 <button
                   onClick={() => setIsCodeModalOpen(false)}
-                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+                  className="p-1 hover:bg-surface text-muted hover:text-copy transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -837,39 +922,39 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
             {/* Error Message */}
             {codeError && (
-              <div className="p-3 bg-red-950 border-b border-red-800 text-xs text-red-200">
+              <div className="p-3 bg-err/10 border-b border-err/60 text-xs text-err font-mono">
                 <span className="font-bold">Gagal Validasi Kode: </span>
                 {codeError}
               </div>
             )}
 
             {/* Editor Textarea */}
-            <div className="flex-1 p-3 bg-slate-950 font-mono text-xs overflow-hidden flex flex-col">
+            <div className="flex-1 p-3 bg-black font-mono text-xs overflow-hidden flex flex-col">
               <textarea
                 value={codeContent}
                 onChange={(e) => setCodeContent(e.target.value)}
-                className="w-full h-full bg-slate-900 text-slate-200 p-3 rounded border border-slate-800 focus:outline-none focus:border-indigo-500 resize-none font-mono text-[11px] leading-relaxed"
+                className="w-full h-full bg-surface text-copy p-3 border border-line focus:outline-none focus:border-action resize-none font-mono text-[11px] leading-relaxed"
                 rows={22}
                 spellCheck={false}
               />
             </div>
 
             {/* Footer */}
-            <div className="px-4 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs">
-              <div className="text-slate-500 text-[11px]">
+            <div className="px-4 py-3 bg-surface border-t border-line flex items-center justify-between text-xs">
+              <div className="text-muted text-[11px] font-mono">
                 Validasi Leak-Guard ketat aktif. Dilarang menggunakan env/eval/process.
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setIsCodeModalOpen(false)}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition"
+                  className="px-3 py-1.5 bg-card hover:border-action border border-line text-copy uppercase font-mono text-xs transition-colors"
                 >
                   Tutup
                 </button>
                 <button
                   onClick={handleSaveCode}
                   disabled={isSavingCode}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-bold transition disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-action hover:bg-action-hover text-bg text-xs font-bold uppercase font-mono tracking-wider transition-colors disabled:opacity-50"
                 >
                   <Save className="w-3.5 h-3.5" />
                   <span>{isSavingCode ? "Memvalidasi..." : "Simpan & Render Ulang"}</span>
@@ -883,78 +968,78 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       {/* Script Mode Modal (PLAN.md P5 Task 2) */}
       {isScriptModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
-            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+          <div className="bg-card border border-line w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden font-sans">
+            <div className="px-4 py-3 bg-surface border-b border-line flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-sky-400" />
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                <FileText className="w-4 h-4 text-action" />
+                <h3 className="text-xs font-bold text-copy uppercase tracking-wider font-mono">
                   Kirim Naskah Script Editorial
                 </h3>
               </div>
               <button
                 onClick={() => setIsScriptModalOpen(false)}
-                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+                className="p-1 hover:bg-surface text-muted hover:text-copy transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="p-4 flex flex-col gap-3 overflow-y-auto">
-              <div className="flex items-center gap-4 bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-                <span className="text-xs font-semibold text-slate-300">Mode Eksekusi:</span>
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+              <div className="flex items-center gap-4 bg-surface p-2.5 border border-line">
+                <span className="text-xs font-bold text-copy uppercase font-mono">Mode:</span>
+                <label className="flex items-center gap-2 text-xs text-copy cursor-pointer font-mono">
                   <input
                     type="radio"
                     name="script_mode"
                     value="strict"
                     checked={scriptMode === "strict"}
                     onChange={() => setScriptMode("strict")}
-                    className="text-indigo-600 focus:ring-0"
+                    className="accent-[#FF6A00]"
                   />
                   <span>Ikuti Persis (Strict)</span>
                 </label>
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <label className="flex items-center gap-2 text-xs text-copy cursor-pointer font-mono">
                   <input
                     type="radio"
                     name="script_mode"
                     value="guide"
                     checked={scriptMode === "guide"}
                     onChange={() => setScriptMode("guide")}
-                    className="text-indigo-600 focus:ring-0"
+                    className="accent-[#FF6A00]"
                   />
                   <span>Jadikan Panduan (Guide)</span>
                 </label>
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-400">
-                  Teks Naskah / Markdown (per baris atau paragraf):
+                <label className="text-xs font-bold text-copy uppercase font-mono">
+                  Teks Naskah / Markdown:
                 </label>
                 <textarea
                   value={scriptText}
                   onChange={(e) => setScriptText(e.target.value)}
                   placeholder="Ketik naskah atau copy paste teks skrip di sini..."
                   rows={8}
-                  className="w-full bg-slate-950 text-slate-200 p-3 rounded-lg border border-slate-800 focus:outline-none focus:border-indigo-500 text-xs font-mono resize-none leading-relaxed"
+                  className="w-full bg-surface text-copy p-3 border border-line focus:outline-none focus:border-action text-xs font-mono resize-none leading-relaxed"
                 />
               </div>
 
               {beatSheetResult && (
-                <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 flex flex-col gap-2">
-                  <div className="flex items-center justify-between text-xs font-semibold">
-                    <span className="text-slate-300">Hasil Penyelarasan (Beat Sheet):</span>
-                    <span className="text-emerald-400 font-mono">
+                <div className="bg-surface p-3 border border-line flex flex-col gap-2">
+                  <div className="flex items-center justify-between text-xs font-semibold font-mono">
+                    <span className="text-copy uppercase">Hasil Penyelarasan:</span>
+                    <span className="text-action">
                       Rate: {Math.round(beatSheetResult.alignment_rate * 100)}% ({beatSheetResult.aligned_lines}/{beatSheetResult.total_lines} baris)
                     </span>
                   </div>
-                  <div className="max-h-36 overflow-y-auto flex flex-col gap-1 pr-1">
+                  <div className="max-h-36 overflow-y-auto flex flex-col gap-1 pr-1 font-mono">
                     {beatSheetResult.beats?.map((b: any, idx: number) => (
                       <div
                         key={idx}
-                        className={`text-[11px] p-1.5 rounded flex items-center justify-between font-mono ${
+                        className={`text-[11px] p-1.5 flex items-center justify-between border ${
                           b.aligned
-                            ? "bg-slate-900/80 text-slate-200 border border-slate-800"
-                            : "bg-red-950/40 text-red-300 border border-red-900/60"
+                            ? "bg-card text-copy border-line"
+                            : "bg-err/10 text-err border-err/60"
                         }`}
                       >
                         <span className="truncate max-w-[70%]">{b.line_text}</span>
@@ -968,21 +1053,21 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
               )}
             </div>
 
-            <div className="px-4 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
-              <div className="text-[11px] text-slate-500">
+            <div className="px-4 py-3 bg-surface border-t border-line flex items-center justify-between">
+              <div className="text-[11px] text-muted font-mono">
                 Penyelarasan otomatis menggunakan pencocokan urutan kata transkrip.
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setIsScriptModalOpen(false)}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition"
+                  className="px-3 py-1.5 bg-card hover:border-action border border-line text-copy uppercase font-mono text-xs transition-colors"
                 >
                   Tutup
                 </button>
                 <button
                   onClick={handleSubmitScript}
                   disabled={isAligningScript || !scriptText.trim()}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-bold transition disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-action hover:bg-action-hover text-bg uppercase font-mono text-xs font-bold transition-colors disabled:opacity-50"
                 >
                   <FileText className="w-3.5 h-3.5" />
                   <span>{isAligningScript ? "Menyelaraskan..." : "Selaraskan & Terapkan"}</span>
@@ -996,57 +1081,57 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       {/* Save Style Modal (PLAN.md P5 Task 5) */}
       {isSaveStyleModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-md flex flex-col shadow-2xl overflow-hidden">
-            <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+          <div className="bg-card border border-line w-full max-w-md flex flex-col shadow-2xl overflow-hidden font-sans">
+            <div className="px-4 py-3 bg-surface border-b border-line flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <BookmarkPlus className="w-4 h-4 text-pink-400" />
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                <BookmarkPlus className="w-4 h-4 text-action" />
+                <h3 className="text-xs font-bold text-copy uppercase tracking-wider font-mono">
                   Simpan Gaya Ini Sebagai Preset
                 </h3>
               </div>
               <button
                 onClick={() => setIsSaveStyleModalOpen(false)}
-                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+                className="p-1 hover:bg-surface text-muted hover:text-copy transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-4 flex flex-col gap-3">
+            <div className="p-4 flex flex-col gap-3 font-mono">
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-slate-400">Nama Preset Gaya:</label>
+                <label className="text-xs font-bold text-copy uppercase">Nama Preset Gaya:</label>
                 <input
                   type="text"
                   value={customStyleName}
                   onChange={(e) => setCustomStyleName(e.target.value)}
                   placeholder="Contoh: Valorant Hype Clean"
-                  className="bg-slate-950 text-slate-200 px-3 py-2 rounded-lg border border-slate-800 text-xs focus:outline-none focus:border-pink-500"
+                  className="bg-surface text-copy px-3 py-2 border border-line text-xs focus:outline-none focus:border-action"
                 />
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-slate-400">Deskripsi Gaya:</label>
+                <label className="text-xs font-bold text-copy uppercase">Deskripsi Gaya:</label>
                 <input
                   type="text"
                   value={customStyleDesc}
                   onChange={(e) => setCustomStyleDesc(e.target.value)}
                   placeholder="Contoh: Shake agresif dengan caption kuning tebal"
-                  className="bg-slate-950 text-slate-200 px-3 py-2 rounded-lg border border-slate-800 text-xs focus:outline-none focus:border-pink-500"
+                  className="bg-surface text-copy px-3 py-2 border border-line text-xs focus:outline-none focus:border-action"
                 />
               </div>
             </div>
 
-            <div className="px-4 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-end gap-2">
+            <div className="px-4 py-3 bg-surface border-t border-line flex items-center justify-end gap-2">
               <button
                 onClick={() => setIsSaveStyleModalOpen(false)}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition"
+                className="px-3 py-1.5 bg-card hover:border-action border border-line text-copy uppercase font-mono text-xs transition-colors"
               >
                 Batal
               </button>
               <button
                 onClick={handleSaveStyle}
                 disabled={isSavingCustomStyle || !customStyleName.trim()}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-pink-600 hover:bg-pink-500 text-white rounded text-xs font-bold transition disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-action hover:bg-action-hover text-bg text-xs font-bold uppercase font-mono tracking-wider transition-colors disabled:opacity-50"
               >
                 <Save className="w-3.5 h-3.5" />
                 <span>{isSavingCustomStyle ? "Menyimpan..." : "Simpan Preset"}</span>

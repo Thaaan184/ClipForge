@@ -698,7 +698,6 @@ export default function App(): JSX.Element {
             <span className="font-extrabold text-base tracking-[0.16em] uppercase text-copy">
               CLIPFORGE
             </span>
-            <span className="text-[10px] font-mono font-bold text-action">v2</span>
           </div>
         </div>
 
@@ -1243,6 +1242,10 @@ export default function App(): JSX.Element {
               <EditorialStudio
                 clipId={editorialClipId}
                 onBack={() => setEditorialClipId(null)}
+                onNavigateToResults={() => {
+                  loadFinishedClipsList();
+                  navigateTo("res");
+                }}
               />
             ) : activeClip ? (
               <div className="flex flex-col gap-8">
@@ -1576,7 +1579,7 @@ export default function App(): JSX.Element {
       {/* Footer */}
       <footer className="border-t border-line py-5 px-6 text-center text-xs text-muted bg-surface/50">
         <div className="max-w-[1280px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 font-mono">
-          <span>CLIPFORGE v2.0 • CUTTING ROOM ENGINE</span>
+          <span>CLIPFORGE v3.0 • CUTTING ROOM ENGINE</span>
           <span>LIBASS • EBU R128 • TARGETED FASTER-WHISPER • 9ROUTER LLM</span>
         </div>
       </footer>

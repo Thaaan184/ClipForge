@@ -1,7 +1,10 @@
 """REST API routes for Editorial Studio v3 (/api/editorial)."""
 
 import json
+import logging
+import os
 import shutil
+import subprocess
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +13,8 @@ from typing import Any
 import aiosqlite
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+
+logger = logging.getLogger(__name__)
 
 from clipforge.core.config import settings
 from clipforge.db.connection import get_db
@@ -384,6 +389,88 @@ async def trigger_final_render(
         # Step 5: Mark DONE and commit version
         commit_sha = commit_workspace_version(ws_dir, summary="Final editorial render completed")
         finish_iso = datetime.now(UTC).isoformat()
+
+        # Link/copy to final.mp4 so both file names resolve
+        final_mp4 = ws_dir / "final.mp4"
+        if final_out.exists() and not final_mp4.exists():
+            try:
+                os.link(final_out, final_mp4)
+            except Exception:
+                shutil.copy2(final_out, final_mp4)
+
+        # Sync with clip and global finished_clips catalog
+        async with db.execute("SELECT clip_id FROM editorial_sessions WHERE id = ?", (session_id,)) as cur:
+            s_row = await cur.fetchone()
+            clip_id = s_row[0] if s_row else None
+
+        if clip_id:
+            async with db.execute(
+                "SELECT job_id, duration_s, thumb_path, srt_path FROM clips WHERE id = ?",
+                (clip_id,),
+            ) as cur:
+                c_row = await cur.fetchone()
+                job_id = c_row[0] if c_row else None
+                duration_s = c_row[1] if c_row else 40.0
+                thumb_path = c_row[2] if c_row else None
+                srt_path = c_row[3] if c_row else None
+
+            project_title = "ClipForge Proyek"
+            if job_id:
+                async with db.execute("SELECT title FROM jobs WHERE id = ?", (job_id,)) as cur:
+                    j_row = await cur.fetchone()
+                    if j_row and j_row[0]:
+                        project_title = j_row[0]
+
+            # Generate thumbnail if not existing
+            if not thumb_path or not Path(thumb_path).exists():
+                thumb_file = ws_dir / "thumb.jpg"
+                if not thumb_file.exists():
+                    try:
+                        subprocess.run(
+                            ["ffmpeg", "-y", "-ss", "00:00:01.000", "-i", str(final_out), "-vframes", "1", "-q:v", "2", str(thumb_file)],
+                            check=True,
+                            capture_output=True,
+                        )
+                    except Exception as exc:
+                        logger.warning("failed_to_extract_thumb: %s", exc)
+                if thumb_file.exists():
+                    thumb_path = str(thumb_file)
+
+            # Update clips table
+            await db.execute(
+                """
+                UPDATE clips
+                SET video_path = ?, status = 'COMPLETED', updated_at = ?
+                WHERE id = ?
+                """,
+                (str(final_out), finish_iso, clip_id),
+            )
+
+            # Upsert into global finished_clips table
+            async with db.execute("SELECT id FROM finished_clips WHERE clip_id = ?", (clip_id,)) as cur:
+                fc_row = await cur.fetchone()
+                if fc_row:
+                    await db.execute(
+                        """
+                        UPDATE finished_clips
+                        SET video_path = ?, thumb_path = COALESCE(?, thumb_path), duration_s = COALESCE(?, duration_s), updated_at = ?
+                        WHERE clip_id = ?
+                        """,
+                        (str(final_out), thumb_path, duration_s, finish_iso, clip_id),
+                    )
+                else:
+                    fc_id = f"fc_{clip_id.replace('-', '')[:10]}"
+                    await db.execute(
+                        """
+                        INSERT INTO finished_clips (
+                            id, clip_id, job_id, project_title, video_path, thumb_path, srt_path,
+                            duration_s, width, height, subtitles_json, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1080, 1920, '[]', ?, ?)
+                        """,
+                        (fc_id, clip_id, job_id, project_title, str(final_out), thumb_path, srt_path, duration_s or 40.0, finish_iso, finish_iso),
+                    )
+
         await db.execute(
             """
             UPDATE editorial_sessions
@@ -432,10 +519,15 @@ async def stream_preview_video(session_id: str) -> FileResponse:
 async def stream_final_video(session_id: str) -> FileResponse:
     """Stream final rendered MP4 video."""
     ws_dir = get_workspace_dir(session_id)
-    final_file = ws_dir / "final.mp4"
-    if not final_file.exists():
-        raise HTTPException(status_code=404, detail="Final video not found")
-    return FileResponse(final_file, media_type="video/mp4")
+    for name in ["final_editorial.mp4", "final.mp4", "raw_final.mp4"]:
+        final_file = ws_dir / name
+        if final_file.exists():
+            return FileResponse(
+                path=final_file,
+                media_type="video/mp4",
+                filename=f"{session_id}_final.mp4",
+            )
+    raise HTTPException(status_code=404, detail="Final video not found")
 
 
 @router.get("/sessions/{session_id}/status", response_model=EditorialStatusResponse)
