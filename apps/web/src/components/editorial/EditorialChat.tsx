@@ -1,13 +1,30 @@
 import React, { useState, useRef, useEffect } from "react";
 import { EditorialMessage, EditorialAsset } from "../../types";
-import { Send, Bot, User, Sparkles, AtSign } from "lucide-react";
+import {
+  Send,
+  Bot,
+  User,
+  Sparkles,
+  AtSign,
+  Play,
+  FileText,
+  PlusCircle,
+  Code2,
+  Loader2,
+} from "lucide-react";
 
 interface EditorialChatProps {
   sessionId: string;
   messages: EditorialMessage[];
   assets: EditorialAsset[];
   isSending: boolean;
+  isAutopilotWorking: boolean;
   onSendMessage: (text: string) => void;
+  onRunAutopilot: () => void;
+  onOpenAssetsTab: () => void;
+  onViewCode: () => void;
+  reviewPlanToggle: boolean;
+  onToggleReviewPlan: () => void;
   externalInputText?: string;
   onClearExternalInput?: () => void;
 }
@@ -24,7 +41,13 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
   messages,
   assets,
   isSending,
+  isAutopilotWorking,
   onSendMessage,
+  onRunAutopilot,
+  onOpenAssetsTab,
+  onViewCode,
+  reviewPlanToggle,
+  onToggleReviewPlan,
   externalInputText,
   onClearExternalInput,
 }) => {
@@ -33,7 +56,6 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Sync external text (such as timestamp comments from video player or @asset mentions)
   useEffect(() => {
     if (externalInputText) {
       setInputText((prev) => {
@@ -88,20 +110,82 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
 
   return (
     <div className="flex flex-col h-full bg-slate-900 border border-slate-800 rounded-lg overflow-hidden text-slate-200">
-      {/* Chat Header */}
-      <div className="px-4 py-3 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-indigo-400" />
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-            Editorial AI Chat
-          </span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/60 font-mono">
-            P3 Stub
-          </span>
+      {/* Autopilot Command Bar (PLAN.md P4 Task 4) */}
+      <div className="p-3 bg-slate-950/90 border-b border-slate-800 flex flex-col gap-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-yellow-400" />
+            <span className="text-xs font-bold text-white uppercase tracking-wider">
+              AI Autopilot
+            </span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-700 font-mono">
+              gaming_hype
+            </span>
+          </div>
+
+          <button
+            onClick={onViewCode}
+            className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-semibold transition"
+            title="Buka kode Composition.tsx hasil susunan AI"
+          >
+            <Code2 className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Lihat Kode</span>
+          </button>
         </div>
-        <span className="text-[11px] text-slate-500 hidden sm:inline">
-          Kirim instruksi atau komentar bertimestamp
-        </span>
+
+        {/* 3 Main Action Buttons & Plan Review Toggle */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={onRunAutopilot}
+            disabled={isAutopilotWorking}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-lg text-xs font-bold transition shadow-sm disabled:opacity-50"
+          >
+            {isAutopilotWorking ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5 fill-current text-yellow-300" />
+            )}
+            <span>{isAutopilotWorking ? "Sedang Memasak..." : "Masak Otomatis"}</span>
+          </button>
+
+          <button
+            disabled
+            title="Mode script otomatis aktif pada Fase P5"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/60 text-slate-500 border border-slate-800 rounded-lg text-xs font-medium cursor-not-allowed"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Kirim Script (P5)</span>
+          </button>
+
+          <button
+            onClick={onOpenAssetsTab}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition"
+          >
+            <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Tambah Aset Dulu ({assets.length})</span>
+          </button>
+
+          <label className="flex items-center gap-2 ml-auto text-[11px] text-slate-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={reviewPlanToggle}
+              onChange={onToggleReviewPlan}
+              className="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0"
+            />
+            <span>Review rencana dulu</span>
+          </label>
+        </div>
+
+        {/* Live Working Progress Banner */}
+        {isAutopilotWorking && (
+          <div className="flex items-center gap-2.5 p-2 bg-indigo-950/60 border border-indigo-700/60 rounded text-xs text-indigo-200">
+            <Loader2 className="w-4 h-4 text-indigo-400 animate-spin shrink-0" />
+            <div className="flex-1 truncate">
+              <span className="font-bold">AI Agent sedang bekerja: </span>
+              Menganalisis manifest sinyal, menyusun komposisi Remotion TSX, typecheck & render still...
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Messages Scroll Area */}
@@ -109,11 +193,11 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
         {messages.length === 0 ? (
           <div className="my-auto text-center flex flex-col items-center gap-2 text-slate-500 py-6">
             <Bot className="w-8 h-8 text-slate-600" />
-            <div className="text-xs font-medium text-slate-400">
-              Editorial Studio siap menerima arahan.
+            <div className="text-xs font-medium text-slate-300">
+              Klip siap diramu oleh AI Autopilot.
             </div>
-            <div className="text-[11px] max-w-sm">
-              Gunakan tombol "Komentar di detik ini" pada video player untuk menandai timestamp, sebut @aset, atau pilih arahan cepat di bawah.
+            <div className="text-[11px] max-w-sm text-slate-400 leading-relaxed">
+              Klik <strong>"Masak Otomatis"</strong> untuk menyusun video 9:16 dengan subtitle kinetic dan efek punch zoom tersinkronisasi, atau berikan instruksi spesifik di bawah.
             </div>
           </div>
         ) : (
