@@ -4,6 +4,7 @@ import {
   cancelJob,
   createJob,
   createManualJob,
+  deleteClip,
   deleteFinishedClip,
   deleteJob,
   getCandidates,
@@ -526,6 +527,23 @@ export default function App(): JSX.Element {
     }
   };
 
+  const handleDeleteRenderedClip = async (clipId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!confirm("Hapus klip ini beserta workspace editornya?")) {
+      return;
+    }
+    try {
+      await deleteClip(clipId);
+      setRenderedClips((prev) => prev.filter((c) => c.id !== clipId));
+      if (activeClip?.id === clipId) {
+        setActiveClip(null);
+      }
+      showToast("Klip berhasil dihapus.");
+    } catch (err: any) {
+      showToast(`Gagal menghapus klip: ${err.message || err}`);
+    }
+  };
+
   const handleUpdateStatus = async (
     candId: string,
     status: "kept" | "rejected" | "proposed"
@@ -994,15 +1012,25 @@ export default function App(): JSX.Element {
 
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
                       {renderedClips.map((c, idx) => (
-                        <button
+                        <div
                           key={c.id}
                           onClick={() => handleSelectClipForEditing(c)}
-                          className={`marked-card p-2.5 bg-card border text-left flex flex-col gap-1.5 transition-all ${
+                          className={`marked-card p-2.5 bg-card border text-left flex flex-col gap-1.5 transition-all relative group cursor-pointer ${
                             activeClip?.id === c.id
                               ? "border-action ring-1 ring-action"
                               : "border-line hover:border-action/60"
                           }`}
                         >
+                          {/* Delete option */}
+                          <button
+                            type="button"
+                            title="Hapus klip ini"
+                            onClick={(e) => handleDeleteRenderedClip(c.id, e)}
+                            className="absolute top-1.5 right-1.5 z-10 p-1 bg-surface border border-line text-muted hover:text-err hover:border-err transition-colors"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+
                           <div className="aspect-[9/12] bg-bg border-x-2 border-dashed border-line flex flex-col items-center justify-center p-2 text-center">
                             <span className="font-extrabold text-sm text-copy font-mono">
                               KLIP #{idx + 1}
@@ -1017,7 +1045,7 @@ export default function App(): JSX.Element {
                               Edit <ArrowRight className="w-2.5 h-2.5" />
                             </span>
                           </div>
-                        </button>
+                        </div>
                       ))}
                     </div>
                   </div>

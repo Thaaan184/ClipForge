@@ -4,7 +4,6 @@ import {
   getClip,
   previewSubtitleFrame,
   rerenderClip,
-  saveFinishedClip,
   updateClipSubtitles,
 } from "../api";
 import {
@@ -330,11 +329,6 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
     setSaveSuccess(false);
     try {
       await updateClipSubtitles(clipId, words, stylePreset, subtitlePosition);
-      try {
-        await saveFinishedClip(clipId);
-      } catch {
-        // finished clip sync fallback
-      }
       setSaveSuccess(true);
       showToast("Revisi subtitle & posisi berhasil disimpan!");
       if (onClipUpdated) onClipUpdated();
@@ -421,10 +415,6 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
 
       clearInterval(progTimer);
 
-      try {
-        await saveFinishedClip(clipId);
-      } catch {}
-
       setRerenderModal({
         isOpen: true,
         status: "success",
@@ -444,9 +434,6 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
       try {
         const checkClip = await getClip(clipId);
         if (checkClip && checkClip.status === "done") {
-          try {
-            await saveFinishedClip(clipId);
-          } catch {}
           setRerenderModal({
             isOpen: true,
             status: "success",

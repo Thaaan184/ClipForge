@@ -117,6 +117,20 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
   const [isAligningScript, setIsAligningScript] = useState(false);
   const [beatSheetResult, setBeatSheetResult] = useState<any>(null);
 
+  // Final Render Modal State
+  const [finalRenderModal, setFinalRenderModal] = useState<{
+    isOpen: boolean;
+    status: "rendering" | "success" | "error";
+    progress: number;
+    message: string;
+    error?: string;
+  }>({
+    isOpen: false,
+    status: "rendering",
+    progress: 10,
+    message: "Mengirim instruksi render final...",
+  });
+
   // 1. Initial Load: create or fetch active session
   const initSession = async () => {
     try {
@@ -165,9 +179,50 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           const st: EditorialStatus = await getEditorialStatus(session.id);
           setSession((prev) => (prev ? { ...prev, status: st.status as any, current_version: st.current_version } : null));
 
-          if (st.status === "DONE" || st.status === "FAILED") {
+          if (st.status === "RENDERING_FINAL") {
+            setFinalRenderModal((prev) => ({
+              ...prev,
+              isOpen: true,
+              status: "rendering",
+              progress: Math.min(Math.max(prev.progress + 4, 30), 75),
+              message: "Merender grafis video final 1080x1920 (30fps)...",
+            }));
+          } else if (st.status === "AUDIO_NORMALIZING") {
+            setFinalRenderModal((prev) => ({
+              ...prev,
+              isOpen: true,
+              status: "rendering",
+              progress: 85,
+              message: "Normalisasi audio EBU R128 (-16 LUFS)...",
+            }));
+          } else if (st.status === "QA") {
+            setFinalRenderModal((prev) => ({
+              ...prev,
+              isOpen: true,
+              status: "rendering",
+              progress: 92,
+              message: "Menjalankan Extended QA check (blackdetect & frozen frames)...",
+            }));
+          } else if (st.status === "DONE") {
             setIsFinalRendering(false);
             setIsAutopilotWorking(false);
+            setFinalRenderModal({
+              isOpen: true,
+              status: "success",
+              progress: 100,
+              message: "Render final berhasil! Klip telah didaftarkan ke Hasil Klip.",
+            });
+            clearInterval(pollInterval);
+          } else if (st.status === "FAILED") {
+            setIsFinalRendering(false);
+            setIsAutopilotWorking(false);
+            setFinalRenderModal({
+              isOpen: true,
+              status: "error",
+              progress: 0,
+              message: "Render final gagal",
+              error: st.error_message || "Proses render terhenti",
+            });
             clearInterval(pollInterval);
           }
         } catch (err) {
@@ -235,10 +290,23 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
     try {
       setIsFinalRendering(true);
       setGlobalError(null);
+      setFinalRenderModal({
+        isOpen: true,
+        status: "rendering",
+        progress: 15,
+        message: "Menyiapkan workspace & bundler Remotion...",
+      });
       await renderEditorialFinal(session.id);
       setSession((prev) => (prev ? { ...prev, status: "RENDERING_FINAL" } : null));
     } catch (err: any) {
       setIsFinalRendering(false);
+      setFinalRenderModal({
+        isOpen: true,
+        status: "error",
+        progress: 0,
+        message: "Gagal memulai render final editorial",
+        error: err.message || "Server tidak merespons",
+      });
       setGlobalError(err.message || "Gagal memulai render final editorial.");
     }
   };
@@ -1137,6 +1205,124 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
                 <span>{isSavingCustomStyle ? "Menyimpan..." : "Simpan Preset"}</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pop-up Render Final Remotion Modal */}
+      {finalRenderModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="marked-frame border border-line bg-surface max-w-sm w-full p-5 shadow-2xl flex flex-col gap-4 font-mono text-xs relative">
+            <i className="crop-mark crop-tl" />
+            <i className="crop-mark crop-tr" />
+            <i className="crop-mark crop-bl" />
+            <i className="crop-mark crop-br" />
+
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-line pb-2.5">
+              <span className="font-extrabold uppercase text-copy tracking-wider flex items-center gap-2">
+                {finalRenderModal.status === "rendering" ? (
+                  <RefreshCw className="w-4 h-4 text-action animate-spin" />
+                ) : finalRenderModal.status === "success" ? (
+                  <Check className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-err" />
+                )}
+                <span>
+                  {finalRenderModal.status === "rendering"
+                    ? "RENDER FINAL BERJALAN..."
+                    : finalRenderModal.status === "success"
+                    ? "RENDER FINAL SELESAI"
+                    : "RENDER FINAL GAGAL"}
+                </span>
+              </span>
+              {finalRenderModal.status !== "rendering" && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFinalRenderModal((prev) => ({ ...prev, isOpen: false }))
+                  }
+                  className="text-muted hover:text-copy"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Modal Body */}
+            {finalRenderModal.status === "rendering" && (
+              <div className="flex flex-col gap-3 py-1">
+                <div className="flex items-center justify-between text-[11px] text-muted">
+                  <span>{finalRenderModal.message}</span>
+                  <span className="text-action font-bold">
+                    {finalRenderModal.progress}%
+                  </span>
+                </div>
+                {/* Progress Bar */}
+                <div className="w-full bg-card h-2 border border-line overflow-hidden">
+                  <div
+                    className="bg-action h-full transition-all duration-300"
+                    style={{ width: `${finalRenderModal.progress}%` }}
+                  />
+                </div>
+                <span className="text-[10px] text-muted text-center pt-1">
+                  Remotion worker sedang merender frame secara headless...
+                </span>
+              </div>
+            )}
+
+            {finalRenderModal.status === "success" && (
+              <div className="flex flex-col items-center gap-3 py-3 text-center">
+                <Check className="w-8 h-8 text-emerald-400 mb-1" />
+                <span className="font-bold text-copy">{finalRenderModal.message}</span>
+                <span className="text-[10px] text-muted">
+                  Video MP4 1080x1920 siap diunduh & direview ulang di tab Hasil Klip.
+                </span>
+                <div className="flex items-center gap-2 w-full pt-2 border-t border-line">
+                  {onNavigateToResults && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFinalRenderModal((prev) => ({ ...prev, isOpen: false }));
+                        onNavigateToResults();
+                      }}
+                      className="flex-1 py-2 px-3 bg-action text-bg font-extrabold text-[11px] uppercase tracking-wider hover:brightness-110"
+                    >
+                      Buka di Hasil Klip ➔
+                    </button>
+                  )}
+                  {session && (
+                    <a
+                      href={`${getEditorialFinalVideoUrl(session.id)}`}
+                      download={`${session.id}_final.mp4`}
+                      className="py-2 px-3 bg-surface border border-line text-copy hover:border-action font-bold text-[11px] uppercase"
+                    >
+                      Unduh
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {finalRenderModal.status === "error" && (
+              <div className="flex flex-col gap-3">
+                <div className="p-3 bg-err/10 border border-err/30 text-err text-xs">
+                  <p className="font-bold mb-1">{finalRenderModal.message}</p>
+                  <p className="font-mono text-[11px] opacity-90">
+                    {finalRenderModal.error}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFinalRenderModal((prev) => ({ ...prev, isOpen: false }))
+                  }
+                  className="btn-ghost w-full py-2 text-xs font-bold text-copy border border-line"
+                >
+                  TUTUP
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

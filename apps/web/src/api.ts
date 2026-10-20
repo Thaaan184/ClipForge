@@ -339,6 +339,16 @@ export async function listFinishedClips(): Promise<FinishedClip[]> {
   return res.json();
 }
 
+export async function deleteClip(clipId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/clips/${clipId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to delete clip ${clipId}`);
+  }
+  return res.json();
+}
+
 export async function deleteFinishedClip(clipId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/api/clips/finished/${clipId}`, {
     method: "DELETE",

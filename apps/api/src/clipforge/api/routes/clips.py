@@ -434,6 +434,52 @@ async def delete_finished_clip(
     return {"status": "deleted", "clip_id": clip_id}
 
 
+@router.delete("/{clip_id}")
+async def delete_clip(
+    clip_id: str, db: aiosqlite.Connection = Depends(get_db)
+) -> dict[str, str]:
+    """Delete a clip from project clips, its workspaces, and finished_clips catalog."""
+    async with db.execute(
+        "SELECT job_id, video_path FROM clips WHERE id = ?",
+        (clip_id,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    job_id = row[0]
+    clip_dir = settings.data_dir / "jobs" / job_id / "clips" / clip_id
+    if clip_dir.exists():
+        shutil.rmtree(clip_dir, ignore_errors=True)
+
+    # Clean up associated editorial workspaces if any
+    try:
+        async with db.execute(
+            "SELECT id, workspace_dir FROM editorial_sessions WHERE clip_id = ?",
+            (clip_id,),
+        ) as es_cur:
+            es_rows = await es_cur.fetchall()
+            for s_id, ws_path in es_rows:
+                if ws_path and Path(ws_path).exists():
+                    shutil.rmtree(Path(ws_path), ignore_errors=True)
+                await db.execute("DELETE FROM editorial_versions WHERE session_id = ?", (s_id,))
+                await db.execute("DELETE FROM editorial_messages WHERE session_id = ?", (s_id,))
+                await db.execute("DELETE FROM editorial_assets WHERE session_id = ?", (s_id,))
+            await db.execute("DELETE FROM editorial_sessions WHERE clip_id = ?", (clip_id,))
+    except Exception:
+        pass
+
+    # Clean up from finished_clips
+    await db.execute("DELETE FROM finished_clips WHERE clip_id = ? OR id = ?", (clip_id, clip_id))
+
+    # Delete clip record
+    await db.execute("DELETE FROM clips WHERE id = ?", (clip_id,))
+    await db.commit()
+
+    return {"status": "deleted", "clip_id": clip_id}
+
+
 @router.post("/{clip_id}/save")
 async def save_clip_to_finished(
     clip_id: str, db: aiosqlite.Connection = Depends(get_db)
@@ -703,9 +749,6 @@ async def update_clip_subtitles(
         (clip_dir / "subs.ass").write_text(ass_content, encoding="utf-8")
         (clip_dir / "clip.srt").write_text(export_srt(chunks), encoding="utf-8")
 
-    # Automatically persist changes into finished_clips repository
-    await sync_finished_clip(db, clip_id)
-
     return {
         "status": "updated",
         "clip_id": clip_id,
@@ -918,9 +961,6 @@ async def rerender_clip(
     except Exception:
         pass
 
-    # Automatically persist final re-rendered clip into finished_clips repository
-    await sync_finished_clip(db, clip_id)
-
     return await get_clip(clip_id, db)
 
 
@@ -1057,9 +1097,6 @@ async def create_editorial_source(
         (ed_path, ed_meta_json, clip_id),
     )
     await db.commit()
-
-    # Sync to finished_clips
-    await sync_finished_clip(db, clip_id)
 
     return {
         "clip_id": clip_id,

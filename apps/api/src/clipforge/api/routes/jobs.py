@@ -401,9 +401,6 @@ async def _execute_manual_clips_batch(
                 )
                 await db.commit()
 
-                # Sync to finished_clips
-                await sync_finished_clip(db, clip_id)
-
             if engine.is_cancelled(job_id):
                 await transition_job_status(db, job_id, JobStatus.CANCELLED)
             elif rendered_any:
