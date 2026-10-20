@@ -23,6 +23,7 @@ interface EditorialChatProps {
   onRunAutopilot: () => void;
   onOpenAssetsTab: () => void;
   onViewCode: () => void;
+  onOpenScriptModal: () => void;
   reviewPlanToggle: boolean;
   onToggleReviewPlan: () => void;
   externalInputText?: string;
@@ -30,11 +31,12 @@ interface EditorialChatProps {
 }
 
 const QUICK_CHIPS = [
-  "Perbesar ukuran caption",
-  "Beri punch zoom di momen puncak",
+  "Lebih rame",
+  "Lebih clean",
+  "Caption lebih besar",
+  "Ganti musik",
+  "Zoom lebih sering",
   "Ducking musik latar lebih halus",
-  "Ganti backsound musik",
-  "Tampilkan asset di detik ini",
 ];
 
 export const EditorialChat: React.FC<EditorialChatProps> = ({
@@ -46,6 +48,7 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
   onRunAutopilot,
   onOpenAssetsTab,
   onViewCode,
+  onOpenScriptModal,
   reviewPlanToggle,
   onToggleReviewPlan,
   externalInputText,
@@ -149,12 +152,12 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
           </button>
 
           <button
-            disabled
-            title="Mode script otomatis aktif pada Fase P5"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/60 text-slate-500 border border-slate-800 rounded-lg text-xs font-medium cursor-not-allowed"
+            onClick={onOpenScriptModal}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold transition shadow-sm"
+            title="Buka panel Kirim Script untuk menyelaraskan narasi"
           >
-            <FileText className="w-3.5 h-3.5" />
-            <span>Kirim Script (P5)</span>
+            <FileText className="w-3.5 h-3.5 text-sky-400" />
+            <span>Kirim Script</span>
           </button>
 
           <button

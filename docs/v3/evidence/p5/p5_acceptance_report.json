@@ -1,0 +1,192 @@
+{
+  "timestamp": "2026-10-20T11:29:02.418889+00:00",
+  "criteria": {
+    "criterion_1_instructions": {
+      "pass": true,
+      "passed_count": 10,
+      "total_count": 10,
+      "details": [
+        {
+          "step": 1,
+          "instruction": "caption lebih besar",
+          "success": true,
+          "summary": "Ukuran caption diperbesar",
+          "duration_s": 1.75,
+          "error": null
+        },
+        {
+          "step": 2,
+          "instruction": "caption lebih kecil",
+          "success": true,
+          "summary": "Ukuran caption diperkecil",
+          "duration_s": 1.76,
+          "error": null
+        },
+        {
+          "step": 3,
+          "instruction": "lebih rame",
+          "success": true,
+          "summary": "Meningkatkan intensitas efek visual (zoom & screen shake)",
+          "duration_s": 1.75,
+          "error": null
+        },
+        {
+          "step": 4,
+          "instruction": "lebih clean",
+          "success": true,
+          "summary": "Gaya disetel lebih clean dan minimalis",
+          "duration_s": 1.71,
+          "error": null
+        },
+        {
+          "step": 5,
+          "instruction": "zoom lebih sering",
+          "success": true,
+          "summary": "Meningkatkan frekuensi dan pembesaran punch zoom",
+          "duration_s": 1.7,
+          "error": null
+        },
+        {
+          "step": 6,
+          "instruction": "ganti musik",
+          "success": true,
+          "summary": "Musik latar diganti",
+          "duration_s": 1.72,
+          "error": null
+        },
+        {
+          "step": 7,
+          "instruction": "ducking musik latar lebih halus",
+          "success": true,
+          "summary": "Menyesuaikan level ducking musik latar",
+          "duration_s": 1.69,
+          "error": null
+        },
+        {
+          "step": 8,
+          "instruction": "hapus b-roll di 00:04",
+          "success": true,
+          "summary": "Penghapusan elemen di [4.0s]",
+          "duration_s": 1.73,
+          "error": null
+        },
+        {
+          "step": 9,
+          "instruction": "tambah callout di [00:03.0]",
+          "success": true,
+          "summary": "Efek lokal di jendela [3.0s \u00b1 1.5s]",
+          "duration_s": 1.57,
+          "error": null
+        },
+        {
+          "step": 10,
+          "instruction": "perbesar subtitle",
+          "success": true,
+          "summary": "Ukuran caption diperbesar",
+          "duration_s": 1.7,
+          "error": null
+        }
+      ]
+    },
+    "criterion_2_timestamp_ssim": {
+      "pass": true,
+      "measured_ssim": 1.0,
+      "min_required_ssim": 0.98,
+      "inspected_frame_time_s": 1.0,
+      "target_timestamp_s": 5.0
+    },
+    "criterion_3_strict_script": {
+      "pass": true,
+      "min_required_rate": 0.9,
+      "scripts": [
+        {
+          "name": "Script 1: Valorant Ace Commentary",
+          "total_lines": 4,
+          "aligned_lines": 4,
+          "alignment_rate": 1.0,
+          "unaligned_count": 0
+        },
+        {
+          "name": "Script 2: Clutch Defuse Timing",
+          "total_lines": 3,
+          "aligned_lines": 3,
+          "alignment_rate": 1.0,
+          "unaligned_count": 0
+        },
+        {
+          "name": "Script 3: Speedrun Trick Explanation",
+          "total_lines": 3,
+          "aligned_lines": 3,
+          "alignment_rate": 1.0,
+          "unaligned_count": 0
+        }
+      ]
+    },
+    "criterion_4_bpm_accuracy": {
+      "pass": true,
+      "tolerance_bpm": 3,
+      "tracks": [
+        {
+          "target_bpm": 120,
+          "detected_bpm": 120.2,
+          "diff": 0.2,
+          "pass": true
+        },
+        {
+          "target_bpm": 140,
+          "detected_bpm": 139.7,
+          "diff": 0.3,
+          "pass": true
+        },
+        {
+          "target_bpm": 90,
+          "detected_bpm": 90.7,
+          "diff": 0.7,
+          "pass": true
+        }
+      ]
+    },
+    "criterion_5_ducking_and_loudnorm": {
+      "pass": true,
+      "audio_integrated_lufs": -16.03,
+      "target_lufs": "-16.0 +- 1.0",
+      "audio_true_peak_dbfs": -9.23,
+      "target_true_peak": "<= -1.5",
+      "qa_passed": true
+    },
+    "criterion_6_broll_bounds": {
+      "pass": true,
+      "scenarios": [
+        {
+          "clip_id": "clip_broll_1",
+          "placements_count": 0,
+          "valid": true
+        },
+        {
+          "clip_id": "clip_broll_2",
+          "placements_count": 1,
+          "valid": true
+        },
+        {
+          "clip_id": "clip_broll_3",
+          "placements_count": 0,
+          "valid": true
+        }
+      ]
+    },
+    "criterion_7_stylepack_clip2": {
+      "pass": true,
+      "saved_pack_name": "neon_cyber_hype",
+      "typecheck_passed": true,
+      "style_tokens_verified": true
+    },
+    "criterion_8_zero_regression": {
+      "pass": true,
+      "backend_pytest_pass": true,
+      "frontend_vitest_pass": true,
+      "frontend_build_pass": true,
+      "zero_diff_v2_baseline": true
+    }
+  },
+  "overall_pass": true
+}
