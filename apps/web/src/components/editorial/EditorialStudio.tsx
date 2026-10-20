@@ -526,7 +526,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
   }
 
   const previewUrl = session ? `${getEditorialPreviewVideoUrl(session.id)}?v=${previewVersionKey}` : "";
-  const finalUrl = session ? getEditorialFinalVideoUrl(session.id) : "";
+  const finalUrl = session ? `${getEditorialFinalVideoUrl(session.id)}?v=${previewVersionKey}` : "";
   const isDone = session?.status === "DONE";
   const isRendering =
     session?.status === "RENDERING_FINAL" ||
@@ -793,6 +793,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           <div className="relative w-full flex-1 min-h-0 aspect-[9/16] max-h-[640px] mx-auto bg-black overflow-hidden border border-line shadow-inner flex items-center justify-center">
             <video
               ref={videoRef}
+              key={previewUrl}
               src={previewUrl}
               controls
               playsInline

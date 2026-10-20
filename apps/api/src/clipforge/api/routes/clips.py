@@ -385,6 +385,11 @@ async def stream_finished_clip_video(
         path=str(video_path),
         media_type="video/mp4",
         filename=f"{clip_id}.mp4",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
@@ -557,6 +562,11 @@ async def stream_clip_video(
         path=str(video_path),
         media_type="video/mp4",
         filename=f"{clip_id}.mp4",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
@@ -945,21 +955,39 @@ async def rerender_clip(
     # Sync active editorial session workspaces if any exist
     try:
         async with db.execute(
-            "SELECT workspace_dir FROM editorial_sessions WHERE clip_id = ?",
+            "SELECT id, workspace_dir FROM editorial_sessions WHERE clip_id = ?",
             (clip_id,),
         ) as es_cur:
             es_rows = await es_cur.fetchall()
-            for (ws_path_str,) in es_rows:
+            for (s_id, ws_path_str) in es_rows:
                 if ws_path_str and Path(ws_path_str).exists() and render_result.get("final_path"):
-                    ws_src = Path(ws_path_str) / "public" / "clip_source.mp4"
+                    ws_dir_path = Path(ws_path_str)
+                    ws_src = ws_dir_path / "public" / "clip_source.mp4"
                     try:
                         if ws_src.exists():
                             ws_src.unlink()
                         os.link(render_result["final_path"], ws_src)
                     except Exception:
-                        shutil.copy2(render_result["final_path"], ws_src)
-    except Exception:
-        pass
+                        try:
+                            shutil.copy2(render_result["final_path"], ws_src)
+                        except Exception:
+                            pass
+
+                    # Purge any stale preview, finals, and still frame caches
+                    (ws_dir_path / "preview.mp4").unlink(missing_ok=True)
+                    (ws_dir_path / "final_editorial.mp4").unlink(missing_ok=True)
+                    (ws_dir_path / "final.mp4").unlink(missing_ok=True)
+                    (ws_dir_path / "raw_final.mp4").unlink(missing_ok=True)
+                    for sf in ws_dir_path.glob("still_*.jpg"):
+                        sf.unlink(missing_ok=True)
+
+                    await db.execute(
+                        "UPDATE editorial_sessions SET status = 'EDITORIAL_DRAFT', updated_at = ? WHERE id = ?",
+                        (datetime.now(UTC).isoformat(), s_id),
+                    )
+            await db.commit()
+    except Exception as exc:
+        logger.warning("sync_editorial_sessions_failed", error=str(exc))
 
     return await get_clip(clip_id, db)
 

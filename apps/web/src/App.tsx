@@ -199,6 +199,23 @@ export default function App(): JSX.Element {
     if (clipId) {
       localStorage.setItem("clipforge_active_clip_id", clipId);
     }
+
+    // Dynamic data sync across tabs
+    const targetJobId = projectId || currentJob?.id;
+    if (targetJobId && (tab === "proc" || tab === "edit")) {
+      getJobClips(targetJobId).then((res) => {
+        if (res?.clips) setRenderedClips(res.clips);
+      }).catch(() => {});
+    }
+    const targetClipId = clipId || activeClip?.id;
+    if (targetClipId && (tab === "proc" || tab === "edit")) {
+      getClip(targetClipId).then((c) => {
+        if (c) setActiveClip(c);
+      }).catch(() => {});
+    }
+    if (tab === "res") {
+      loadFinishedClipsList();
+    }
   };
 
   // Load recent jobs
@@ -1269,7 +1286,16 @@ export default function App(): JSX.Element {
             {editorialClipId ? (
               <EditorialStudio
                 clipId={editorialClipId}
-                onBack={() => setEditorialClipId(null)}
+                onBack={async () => {
+                  setEditorialClipId(null);
+                  if (activeClip) {
+                    await handleReloadCurrentClip();
+                  }
+                  if (currentJob) {
+                    const clipsRes = await getJobClips(currentJob.id).catch(() => ({ clips: [] }));
+                    if (clipsRes?.clips) setRenderedClips(clipsRes.clips);
+                  }
+                }}
                 onNavigateToResults={() => {
                   loadFinishedClipsList();
                   navigateTo("res");
@@ -1465,7 +1491,8 @@ export default function App(): JSX.Element {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {finishedClips.map((fc) => {
-                  const videoUrl = getFinishedClipVideoUrl(fc.clip_id || fc.id);
+                  const fcTimestamp = fc.updated_at || fc.created_at || "";
+                  const videoUrl = `${getFinishedClipVideoUrl(fc.clip_id || fc.id)}${fcTimestamp ? `?t=${encodeURIComponent(fcTimestamp)}` : ""}`;
                   const srtUrl = getFinishedClipSrtUrl(fc.clip_id || fc.id);
                   let wordsPreview = "";
                   try {
@@ -1490,6 +1517,7 @@ export default function App(): JSX.Element {
                       {/* Video Player 9:16 */}
                       <div className="w-full aspect-[9/16] bg-bg border-x-4 border-dashed border-line relative overflow-hidden flex items-center justify-center">
                         <video
+                          key={`${fc.id}_${fcTimestamp}`}
                           src={videoUrl}
                           controls
                           playsInline

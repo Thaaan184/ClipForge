@@ -84,6 +84,7 @@ async def create_editorial_session(
         existing = await cur.fetchone()
         if existing and Path(existing[5]).exists():
             ws_dir = Path(existing[5])
+            needs_sync = False
             # Keep workspace clip_source in exact sync with user's rendered clip
             async with db.execute(
                 "SELECT video_path, editorial_source_path FROM clips WHERE id = ?",
@@ -98,21 +99,43 @@ async def create_editorial_session(
                         rendered_candidate = Path(v_row[1])
                     if rendered_candidate:
                         ws_source = ws_dir / "public" / "clip_source.mp4"
-                        try:
-                            if not ws_source.exists() or (ws_source.stat().st_size != rendered_candidate.stat().st_size):
+                        if not ws_source.exists():
+                            needs_sync = True
+                        elif ws_source.stat().st_size != rendered_candidate.stat().st_size:
+                            needs_sync = True
+                        elif rendered_candidate.stat().st_mtime > ws_source.stat().st_mtime:
+                            needs_sync = True
+
+                        if needs_sync:
+                            try:
+                                ws_source.parent.mkdir(parents=True, exist_ok=True)
                                 if ws_source.exists():
                                     ws_source.unlink()
                                 os.link(rendered_candidate, ws_source)
-                        except Exception:
-                            try:
-                                shutil.copy2(rendered_candidate, ws_source)
                             except Exception:
-                                pass
+                                try:
+                                    shutil.copy2(rendered_candidate, ws_source)
+                                except Exception:
+                                    pass
+
+                            # Invalidate stale preview, final videos, and stills
+                            (ws_dir / "preview.mp4").unlink(missing_ok=True)
+                            (ws_dir / "final_editorial.mp4").unlink(missing_ok=True)
+                            (ws_dir / "final.mp4").unlink(missing_ok=True)
+                            (ws_dir / "raw_final.mp4").unlink(missing_ok=True)
+                            for sf in ws_dir.glob("still_*.jpg"):
+                                sf.unlink(missing_ok=True)
+
+                            await db.execute(
+                                "UPDATE editorial_sessions SET status = 'EDITORIAL_DRAFT', updated_at = ? WHERE id = ?",
+                                (datetime.now(UTC).isoformat(), existing[0]),
+                            )
+                            await db.commit()
 
             return EditorialSessionResponse(
                 id=existing[0],
                 clip_id=existing[1],
-                status=existing[2],
+                status="EDITORIAL_DRAFT" if needs_sync else existing[2],
                 current_version=existing[3],
                 style_pack=existing[4],
                 workspace_dir=existing[5],
@@ -217,7 +240,7 @@ async def get_editorial_session(
     session_id: str,
     db: aiosqlite.Connection = Depends(get_db),
 ) -> EditorialSessionResponse:
-    """Retrieve editorial session state."""
+    """Retrieve editorial session state and ensure workspace source is strictly synchronized."""
     async with db.execute(
         """
         SELECT id, clip_id, status, current_version, style_pack,
@@ -232,18 +255,66 @@ async def get_editorial_session(
         if not row:
             raise HTTPException(status_code=404, detail="Editorial session not found")
 
+    sess_id, clip_id, st_val, cur_ver, s_pack, ws_path_str, m_path, err_msg, f_stage, c_at, u_at = row
+    if ws_path_str and Path(ws_path_str).exists() and clip_id:
+        ws_dir = Path(ws_path_str)
+        async with db.execute(
+            "SELECT video_path, editorial_source_path FROM clips WHERE id = ?",
+            (clip_id,),
+        ) as v_cur:
+            v_row = await v_cur.fetchone()
+            if v_row:
+                latest_cand = None
+                if v_row[0] and Path(v_row[0]).exists():
+                    latest_cand = Path(v_row[0])
+                elif v_row[1] and Path(v_row[1]).exists():
+                    latest_cand = Path(v_row[1])
+
+                if latest_cand:
+                    ws_source = ws_dir / "public" / "clip_source.mp4"
+                    needs_sync = False
+                    if not ws_source.exists():
+                        needs_sync = True
+                    elif ws_source.stat().st_size != latest_cand.stat().st_size:
+                        needs_sync = True
+                    elif latest_cand.stat().st_mtime > ws_source.stat().st_mtime:
+                        needs_sync = True
+
+                    if needs_sync:
+                        try:
+                            if ws_source.exists():
+                                ws_source.unlink()
+                            os.link(latest_cand, ws_source)
+                        except Exception:
+                            try:
+                                shutil.copy2(latest_cand, ws_source)
+                            except Exception:
+                                pass
+                        (ws_dir / "preview.mp4").unlink(missing_ok=True)
+                        (ws_dir / "final_editorial.mp4").unlink(missing_ok=True)
+                        (ws_dir / "final.mp4").unlink(missing_ok=True)
+                        (ws_dir / "raw_final.mp4").unlink(missing_ok=True)
+                        for sf in ws_dir.glob("still_*.jpg"):
+                            sf.unlink(missing_ok=True)
+                        st_val = "EDITORIAL_DRAFT"
+                        await db.execute(
+                            "UPDATE editorial_sessions SET status = 'EDITORIAL_DRAFT', updated_at = ? WHERE id = ?",
+                            (datetime.now(UTC).isoformat(), sess_id),
+                        )
+                        await db.commit()
+
     return EditorialSessionResponse(
-        id=row[0],
-        clip_id=row[1],
-        status=row[2],
-        current_version=row[3],
-        style_pack=row[4],
-        workspace_dir=row[5],
-        manifest_path=row[6],
-        error_message=row[7],
-        failed_stage=row[8],
-        created_at=row[9],
-        updated_at=row[10],
+        id=sess_id,
+        clip_id=clip_id,
+        status=st_val,
+        current_version=cur_ver,
+        style_pack=s_pack,
+        workspace_dir=ws_path_str,
+        manifest_path=m_path,
+        error_message=err_msg,
+        failed_stage=f_stage,
+        created_at=c_at,
+        updated_at=u_at,
     )
 
 
@@ -477,15 +548,56 @@ async def trigger_final_render(
                 if thumb_file.exists():
                     thumb_path = str(thumb_file)
 
+            # Mirror back to clip directory so all other views see the final editorial video
+            if job_id:
+                clip_dir = settings.data_dir / "jobs" / job_id / "clips" / clip_id
+                if clip_dir.exists():
+                    clip_final = clip_dir / "final.mp4"
+                    clip_ed = clip_dir / "editorial_source.mp4"
+                    try:
+                        if clip_final.exists():
+                            clip_final.unlink()
+                        os.link(final_out, clip_final)
+                    except Exception:
+                        try:
+                            shutil.copy2(final_out, clip_final)
+                        except Exception:
+                            pass
+                    try:
+                        if clip_ed.exists():
+                            clip_ed.unlink()
+                        os.link(final_out, clip_ed)
+                    except Exception:
+                        try:
+                            shutil.copy2(final_out, clip_ed)
+                        except Exception:
+                            pass
+
             # Update clips table
             await db.execute(
                 """
                 UPDATE clips
-                SET video_path = ?, status = 'COMPLETED'
+                SET video_path = ?, thumb_path = ?, status = 'done'
                 WHERE id = ?
                 """,
-                (str(final_out), clip_id),
+                (str(final_out), thumb_path, clip_id),
             )
+
+            # Mirror to permanent finished_clips folder
+            perm_dir = settings.data_dir / "finished_clips" / clip_id
+            perm_dir.mkdir(parents=True, exist_ok=True)
+            perm_video = perm_dir / f"{clip_id}.mp4"
+            try:
+                if perm_video.exists():
+                    perm_video.unlink()
+                os.link(final_out, perm_video)
+            except Exception:
+                try:
+                    shutil.copy2(final_out, perm_video)
+                except Exception:
+                    pass
+
+            target_video_path = str(perm_video) if perm_video.exists() else str(final_out)
 
             # Upsert into global finished_clips table
             async with db.execute("SELECT id FROM finished_clips WHERE clip_id = ?", (clip_id,)) as cur:
@@ -497,7 +609,7 @@ async def trigger_final_render(
                         SET video_path = ?, thumb_path = COALESCE(?, thumb_path), duration_s = COALESCE(?, duration_s), updated_at = ?
                         WHERE clip_id = ?
                         """,
-                        (str(final_out), thumb_path, duration_s, finish_iso, clip_id),
+                        (target_video_path, thumb_path, duration_s, finish_iso, clip_id),
                     )
                 else:
                     fc_id = f"fc_{clip_id.replace('-', '')[:10]}"
@@ -509,7 +621,7 @@ async def trigger_final_render(
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1080, 1920, '[]', ?, ?)
                         """,
-                        (fc_id, clip_id, job_id, project_title, str(final_out), thumb_path, srt_path, duration_s or 40.0, finish_iso, finish_iso),
+                        (fc_id, clip_id, job_id, project_title, target_video_path, thumb_path, srt_path, duration_s or 40.0, finish_iso, finish_iso),
                     )
 
         await db.execute(
@@ -541,16 +653,28 @@ async def trigger_final_render(
 @router.get("/sessions/{session_id}/preview.mp4")
 @router.head("/sessions/{session_id}/preview.mp4")
 async def stream_preview_video(session_id: str) -> FileResponse:
-    """Stream low-res preview MP4 for web player. Falls back to source video if preview is unrendered."""
+    """Stream low-res preview MP4 for web player. Falls back to source video if preview is unrendered or stale."""
     ws_dir = get_workspace_dir(session_id)
     preview_file = ws_dir / "preview.mp4"
-    if preview_file.exists():
-        return FileResponse(preview_file, media_type="video/mp4")
-
-    # Fallback to source video if preview has not been rendered yet
     source_file = ws_dir / "public" / "clip_source.mp4"
+
+    # Invalidate preview if source video is newer
+    if preview_file.exists() and source_file.exists():
+        if preview_file.stat().st_mtime < source_file.stat().st_mtime:
+            preview_file.unlink(missing_ok=True)
+
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+    if preview_file.exists():
+        return FileResponse(preview_file, media_type="video/mp4", headers=headers)
+
+    # Fallback to source video if preview has not been rendered yet or was invalidated
     if source_file.exists():
-        return FileResponse(source_file, media_type="video/mp4")
+        return FileResponse(source_file, media_type="video/mp4", headers=headers)
 
     raise HTTPException(status_code=404, detail="Preview video not found")
 
@@ -558,8 +682,13 @@ async def stream_preview_video(session_id: str) -> FileResponse:
 @router.get("/sessions/{session_id}/final.mp4")
 @router.head("/sessions/{session_id}/final.mp4")
 async def stream_final_video(session_id: str) -> FileResponse:
-    """Stream final rendered MP4 video."""
+    """Stream final rendered MP4 video with no-cache headers."""
     ws_dir = get_workspace_dir(session_id)
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
     for name in ["final_editorial.mp4", "final.mp4", "raw_final.mp4"]:
         final_file = ws_dir / name
         if final_file.exists():
@@ -567,6 +696,7 @@ async def stream_final_video(session_id: str) -> FileResponse:
                 path=final_file,
                 media_type="video/mp4",
                 filename=f"{session_id}_final.mp4",
+                headers=headers,
             )
     raise HTTPException(status_code=404, detail="Final video not found")
 

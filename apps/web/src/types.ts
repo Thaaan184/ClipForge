@@ -140,6 +140,7 @@ export interface Clip {
   render_params: Record<string, unknown>;
   qa?: QAInfo | null;
   created_at: string;
+  updated_at?: string | null;
   project_title?: string | null;
 }
 

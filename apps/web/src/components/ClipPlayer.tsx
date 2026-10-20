@@ -22,10 +22,14 @@ export const ClipPlayer: React.FC<ClipPlayerProps> = ({
   onEditSubtitles,
   onOpenEditorial,
 }) => {
-  const videoUrl = getClipVideoUrl(clip.id);
+  const videoTimestamp = clip.updated_at || clip.created_at || "";
+  const videoUrl = `${getClipVideoUrl(clip.id)}${videoTimestamp ? `?t=${encodeURIComponent(videoTimestamp)}` : ""}`;
   const srtUrl = getClipSrtUrl(clip.id);
 
   const qaPassed = clip.qa?.passed ?? false;
+  const isVideoReady =
+    clip.status?.toLowerCase() === "done" ||
+    clip.status?.toLowerCase() === "completed";
 
   return (
     <div className="marked-frame border border-line bg-surface p-6 shadow-2xl flex flex-col md:flex-row gap-6">
@@ -37,8 +41,9 @@ export const ClipPlayer: React.FC<ClipPlayerProps> = ({
       {/* 9:16 Video Player with Film Perforations */}
       <div className="w-full md:w-72 shrink-0 flex flex-col items-center">
         <div className="w-full aspect-[9/16] bg-bg border-x-4 border-dashed border-line relative shadow-2xl flex items-center justify-center overflow-hidden">
-          {clip.status === "done" ? (
+          {isVideoReady ? (
             <video
+              key={`${clip.id}_${videoTimestamp}`}
               src={videoUrl}
               controls
               playsInline
