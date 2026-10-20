@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     ttl_hours: int = Field(default=168, description="Data retention in hours (default 7 days)")
     cookies_file: Path | None = Field(default=None, description="Path to cookies.txt")
     preset_dir: Path = Field(default=Path("./presets"), description="Path to presets directory")
+    default_subtitle_preset: str = Field(
+        default="none", description="Default subtitle visual preset ('none' for clean cuts)"
+    )
 
 
 settings = Settings()

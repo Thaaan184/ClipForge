@@ -250,7 +250,7 @@ export async function updateClipSubtitles(
   const presetStr =
     typeof stylePreset === "string"
       ? stylePreset
-      : stylePreset?.preset || "classic_white";
+      : stylePreset?.preset || "none";
 
   const res = await fetch(`${API_BASE}/api/clips/${clipId}/subtitles`, {
     method: "PUT",
@@ -278,7 +278,7 @@ export async function previewSubtitleFrame(
   const presetStr =
     typeof stylePreset === "string"
       ? stylePreset
-      : stylePreset?.preset || "classic_white";
+      : stylePreset?.preset || "none";
 
   const res = await fetch(`${API_BASE}/api/clips/${clipId}/subtitles/preview`, {
     method: "POST",
@@ -519,4 +519,28 @@ export function getFinishedClipVideoUrl(clipId: string): string {
 
 export function getFinishedClipSrtUrl(clipId: string): string {
   return `${API_BASE}/api/clips/finished/${clipId}/srt`;
+}
+
+export function getEditorialSourceUrl(clipId: string): string {
+  return `${API_BASE}/api/clips/${clipId}/editorial-source`;
+}
+
+export async function getEditorialSourceMeta(clipId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/clips/${clipId}/editorial-source/meta`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch editorial source meta for clip ${clipId}`);
+  }
+  return res.json();
+}
+
+export async function requestEditorialSource(clipId: string, reframeMode = "blur"): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/clips/${clipId}/editorial-source`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reframe_mode: reframeMode }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to generate editorial source for clip ${clipId}`);
+  }
+  return res.json();
 }

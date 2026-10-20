@@ -35,9 +35,17 @@ def legacy_reframe_to_scene(
     canvas_fps = min(60, max(1, round(fps)))
 
     sub_cfg = subtitle_cfg or {}
+    preset_name = sub_cfg.get("preset", "none")
+    default_enabled = preset_name.lower() not in (
+        "none",
+        "off",
+        "disable",
+        "no_subtitles",
+        "tanpa_subtitle",
+    )
     subtitles = SubtitlesConfig(
-        enabled=sub_cfg.get("enabled", True),
-        preset=sub_cfg.get("preset", "classic_white"),
+        enabled=sub_cfg.get("enabled", default_enabled),
+        preset=preset_name,
         position=sub_cfg.get("position", "bottom"),
     )
 

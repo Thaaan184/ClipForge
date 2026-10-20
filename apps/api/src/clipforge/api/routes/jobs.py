@@ -1051,7 +1051,7 @@ async def get_candidate_scene(
             params = {}
 
     reframe_mode = params.get("reframe_mode", "blur")
-    sub_style = params.get("subtitle_style", "classic_white")
+    sub_style = params.get("subtitle_style", "none")
     sub_pos = params.get("subtitle_position", "bottom")
 
     actual_start = u_start if u_start is not None else start_s
@@ -1064,7 +1064,7 @@ async def get_candidate_scene(
         mode=reframe_mode or "blur",
         source_dims=(src_w, src_h),
         subtitle_cfg={
-            "preset": sub_style or "classic_white",
+            "preset": sub_style or "none",
             "position": sub_pos or "bottom",
         },
         start_s=actual_start,
@@ -1162,7 +1162,7 @@ async def preview_candidate_scene_frame(
             mode=params.get("reframe_mode", "blur"),
             source_dims=(1920, 1080),
             subtitle_cfg={
-                "preset": params.get("subtitle_style", "classic_white"),
+                "preset": params.get("subtitle_style", "none"),
                 "position": params.get("subtitle_position", "bottom"),
             },
             start_s=actual_start,
@@ -1278,7 +1278,7 @@ async def trigger_job_render(
     req_cand_ids = payload.candidate_ids if payload else None
     req_reframe = (payload.reframe_mode if payload else None) or params.get("reframe_mode", "blur")
     req_style = (payload.subtitle_style if payload else None) or params.get(
-        "subtitle_style", "classic_white"
+        "subtitle_style", "none"
     )
     req_position = (payload.subtitle_position if payload else None) or params.get(
         "subtitle_position", "bottom"

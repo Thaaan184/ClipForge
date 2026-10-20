@@ -43,7 +43,7 @@ class JobCreateRequest(BaseModel):
     min_duration_s: float = Field(default=15.0, ge=10.0, description="Min clip duration")
     max_duration_s: float = Field(default=60.0, le=180.0, description="Max clip duration")
     reframe_mode: str = Field(default="blur", description="blur, center, stacked")
-    subtitle_style: str = Field(default="classic_white", description="Subtitle visual preset")
+    subtitle_style: str = Field(default="none", description="Subtitle visual preset")
     subtitle_position: str = Field(default="bottom", description="Subtitle placement: 'bottom' or 'top' (YT Shorts safe zone)")
     manual: bool = Field(default=False, description="Manual clip mode flag")
     start_time: str | float | None = Field(default=None, description="Start timestamp for manual clip")

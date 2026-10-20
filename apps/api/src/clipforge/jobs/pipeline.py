@@ -24,6 +24,7 @@ from clipforge.ingest.models import VideoMetadata
 from clipforge.ingest.probe import probe_video
 from clipforge.llm.client import evaluate_candidate_scout
 from clipforge.quality.gate import evaluate_quality_gate
+from clipforge.render.editorial_source import render_editorial_source
 from clipforge.render.engine import render_single_clip
 from clipforge.render.scene.schema import SceneGraph
 from clipforge.signals.audio import extract_audio_features
@@ -553,7 +554,7 @@ async def stage_render_clips(
     source_url = stage_input.get("source_url", "")
     target_count = int(stage_input.get("clip_count", 5))
     reframe_mode = stage_input.get("reframe_mode", "blur")
-    subtitle_style = stage_input.get("subtitle_style", "classic_white")
+    subtitle_style = stage_input.get("subtitle_style", "none")
     subtitle_position = stage_input.get("subtitle_position", stage_input.get("subtitle_location", "bottom"))
 
     # Fetch kept, specific, or top candidates from DB
@@ -790,6 +791,16 @@ async def stage_render_clips(
             if render_res["final_path"]:
                 rendered_files.append(render_res["final_path"])
 
+        # Render editorial_source (clean 9:16 reframe, no subtitle, no loudnorm for v3 Remotion)
+        ed_res = render_editorial_source(
+            clip_dir=clip_folder,
+            raw_video=raw_video,
+            mode=reframe_mode,
+            expected_duration_s=cand["duration_s"],
+        )
+        ed_path = ed_res.get("path")
+        ed_meta_json = json.dumps(ed_res.get("metadata")) if ed_res.get("metadata") else None
+
         # 4. Insert clip into DB
         r_params_json = json.dumps({
             "reframe_mode": reframe_mode if not cand_scene else "freeform",
@@ -803,8 +814,9 @@ async def stage_render_clips(
             """
             INSERT INTO clips (
                 id, candidate_id, job_id, status, video_path, thumb_path, srt_path,
-                width, height, duration_s, render_params_json, qa_json, scene_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1080, 1920, ?, ?, ?, ?, ?)
+                width, height, duration_s, render_params_json, qa_json, scene_json,
+                editorial_source_path, editorial_source_meta_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1080, 1920, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 clip_id,
@@ -818,6 +830,8 @@ async def stage_render_clips(
                 r_params_json,
                 qa_json_str,
                 cand_scene_str,
+                ed_path,
+                ed_meta_json,
                 now_iso,
             ),
         )

@@ -11,13 +11,13 @@ export const REFRAME_OPTIONS = [
 ] as const;
 
 export const SUBTITLE_PRESET_OPTIONS = [
+  { value: "none", label: "Tanpa Subtitle (Default)" },
   { value: "classic_white", label: "Classic White (Putih)" },
   { value: "fire_orange", label: "Fire Orange (Oranye)" },
   { value: "hormozi_bold", label: "Hormozi Bold (Kuning/Hijau)" },
   { value: "mrbeast_box", label: "MrBeast Box (Bold Gold)" },
   { value: "neon_glow", label: "Neon Glow (Cyan/Magenta)" },
   { value: "minimal_clean", label: "Minimal Clean (Putih Minimalis)" },
-  { value: "none", label: "Tanpa Subtitle (No Subtitle)" },
 ] as const;
 
 export const SUBTITLE_POSITION_OPTIONS = [
