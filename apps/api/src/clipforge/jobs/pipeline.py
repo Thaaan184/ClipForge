@@ -791,12 +791,13 @@ async def stage_render_clips(
             if render_res["final_path"]:
                 rendered_files.append(render_res["final_path"])
 
-        # Render editorial_source (clean 9:16 reframe, no subtitle, no loudnorm for v3 Remotion)
+        # Render editorial_source (clean 9:16 reframe or freeform canvas, no subtitle, no loudnorm for v3 Remotion)
         ed_res = render_editorial_source(
             clip_dir=clip_folder,
             raw_video=raw_video,
             mode=reframe_mode,
             expected_duration_s=cand["duration_s"],
+            scene_graph=cand_scene,
         )
         ed_path = ed_res.get("path")
         ed_meta_json = json.dumps(ed_res.get("metadata")) if ed_res.get("metadata") else None

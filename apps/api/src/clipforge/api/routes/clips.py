@@ -937,12 +937,12 @@ async def create_editorial_source(
 ) -> dict[str, Any]:
     """Render or re-render 9:16 editorial_source.mp4 without subtitles and without loudnorm."""
     async with db.execute(
-        "SELECT job_id, render_params_json, duration_s FROM clips WHERE id = ?", (clip_id,)
+        "SELECT job_id, render_params_json, duration_s, scene_json FROM clips WHERE id = ?", (clip_id,)
     ) as cur:
         row = await cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Clip not found")
-        job_id, r_params_str, duration_s = row[0], row[1], row[2]
+        job_id, r_params_str, duration_s, scene_json_str = row[0], row[1], row[2], row[3]
 
     clip_dir = settings.data_dir / "jobs" / job_id / "clips" / clip_id
     raw_video = clip_dir / "raw.mp4"
@@ -956,11 +956,19 @@ async def create_editorial_source(
         else r_params.get("reframe_mode", "blur")
     )
 
+    scene_graph = None
+    if scene_json_str:
+        try:
+            scene_graph = SceneGraph.model_validate_json(scene_json_str)
+        except Exception:
+            pass
+
     res = render_editorial_source(
         clip_dir=clip_dir,
         raw_video=raw_video,
         mode=mode,
         expected_duration_s=duration_s,
+        scene_graph=scene_graph,
     )
 
     if not res["success"] or not res["path"]:

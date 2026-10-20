@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ import structlog
 from clipforge.core.config import settings
 from clipforge.qa.inspector import run_clip_qa
 from clipforge.render.reframe import build_reframe_filtergraph
+from clipforge.render.scene.compiler import FFmpegSceneCompiler
+from clipforge.render.scene.schema import SceneGraph
 
 logger = structlog.get_logger(__name__)
 
@@ -84,67 +87,124 @@ def render_editorial_source(
     expected_duration_s: float | None = None,
     game_roi: tuple[float, float, float, float] | None = None,
     face_roi: tuple[float, float, float, float] | None = None,
+    scene_graph: SceneGraph | None = None,
 ) -> dict[str, Any]:
     """
     Render 9:16 editorial_source.mp4 without subtitles and without loudnorm.
+    Preserves freeform canvas scene cuts if scene_graph is provided.
     Audio dynamic range is preserved for later Remotion BGM mixing.
     """
     clip_dir.mkdir(parents=True, exist_ok=True)
     output_mp4 = clip_dir / "editorial_source.mp4"
 
-    filtergraph = build_reframe_filtergraph(
-        mode=mode,
-        ass_file=None,
-        fonts_dir="fonts",
-        game_roi=game_roi,
-        face_roi=face_roi,
-    )
-
     encoder = settings.ffmpeg_encoder if settings.ffmpeg_encoder != "auto" else "libx264"
+    scene_tmp_dir = clip_dir / "_scene_tmp_ed"
+    temp_assets_to_clean: list[Path] = []
 
-    # FFmpeg command: Reframe 9:16, no subtitle filter, no audio loudnorm filter
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(raw_video.name),
-        "-filter_complex",
-        filtergraph,
-        "-map",
-        "[v]",
-        "-map",
-        "0:a?",
-        "-r",
-        str(fps),
-        "-c:v",
-        encoder,
-        "-crf",
-        "18",
-        "-preset",
-        "veryfast",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-ar",
-        "48000",
-        "-movflags",
-        "+faststart",
-        "-loglevel",
-        "error",
-        output_mp4.name,
-    ]
+    if scene_graph:
+        fonts_dir = clip_dir / "fonts"
+        fonts_dir.mkdir(parents=True, exist_ok=True)
+        compiler = FFmpegSceneCompiler()
+        compiled = compiler.compile(
+            scene=scene_graph,
+            source_video=raw_video,
+            work_dir=scene_tmp_dir,
+            ass_path=None,
+            duration_s=expected_duration_s or 60.0,
+            fps=float(fps),
+            fonts_dir=fonts_dir,
+        )
+        temp_assets_to_clean.extend(compiled.temp_assets)
+        cmd = [
+            "ffmpeg",
+            "-y",
+            *compiled.input_args,
+            "-filter_complex",
+            compiled.filter_complex,
+            *compiled.map_args,
+            "-r",
+            str(fps),
+            "-c:v",
+            encoder,
+            "-crf",
+            "18",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-ar",
+            "48000",
+            "-movflags",
+            "+faststart",
+            "-loglevel",
+            "error",
+            output_mp4.name,
+        ]
+    else:
+        filtergraph = build_reframe_filtergraph(
+            mode=mode,
+            ass_file=None,
+            fonts_dir="fonts",
+            game_roi=game_roi,
+            face_roi=face_roi,
+        )
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(raw_video.name),
+            "-filter_complex",
+            filtergraph,
+            "-map",
+            "[v]",
+            "-map",
+            "0:a?",
+            "-r",
+            str(fps),
+            "-c:v",
+            encoder,
+            "-crf",
+            "18",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-ar",
+            "48000",
+            "-movflags",
+            "+faststart",
+            "-loglevel",
+            "error",
+            output_mp4.name,
+        ]
 
     logger.info(
         "rendering_editorial_source",
         clip_dir=str(clip_dir),
         mode=mode,
         fps=fps,
+        has_scene_graph=scene_graph is not None,
     )
 
-    proc = subprocess.run(cmd, cwd=str(clip_dir), capture_output=True)
+    try:
+        proc = subprocess.run(cmd, cwd=str(clip_dir), capture_output=True)
+    finally:
+        for p in temp_assets_to_clean:
+            try:
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                elif p.exists():
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass
     if proc.returncode != 0:
         err_msg = proc.stderr.decode("utf-8", errors="replace")
         logger.error("editorial_source_render_failed", stderr=err_msg[:500])
