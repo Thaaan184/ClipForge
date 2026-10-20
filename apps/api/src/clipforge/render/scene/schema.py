@@ -116,8 +116,8 @@ class CanvasConfig(StrictBase):
 
 
 class SubtitlesConfig(StrictBase):
-    enabled: bool = True
-    preset: str = "classic_white"
+    enabled: bool = False
+    preset: str = "none"
     position: str = "bottom"
     position_y: float | None = None
     font_size: int | None = None

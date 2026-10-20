@@ -80,7 +80,7 @@ export const JobForm: React.FC<JobFormProps> = ({
   const [language, setLanguage] = useState("id");
   const [clipCount, setClipCount] = useState(5);
   const [reframeMode, setReframeMode] = useState<"blur" | "center" | "stacked">("blur");
-  const [subtitleStyle, setSubtitleStyle] = useState("classic_white");
+  const [subtitleStyle, setSubtitleStyle] = useState("none");
   const [subtitlePosition, setSubtitlePosition] = useState<"bottom" | "top">("bottom");
   const [error, setError] = useState<string | null>(null);
 

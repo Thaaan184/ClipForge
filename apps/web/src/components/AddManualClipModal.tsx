@@ -70,7 +70,7 @@ export const AddManualClipModal: React.FC<AddManualClipModalProps> = ({
   const [clips, setClips] = useState<ManualClipRow[]>([
     { id: "row-1", startTime: "", endTime: "", title: "" },
   ]);
-  const [subtitleStyle, setSubtitleStyle] = useState("classic_white");
+  const [subtitleStyle, setSubtitleStyle] = useState("none");
   const [subtitlePosition, setSubtitlePosition] = useState<"bottom" | "top">("bottom");
   const [reframeMode, setReframeMode] = useState<"blur" | "center" | "stacked">("blur");
   const [error, setError] = useState<string | null>(null);

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from clipforge.core.config import settings
 from clipforge.core.logging import logger
 from clipforge.db.connection import get_db
+from clipforge.render.editorial_source import render_editorial_source
 from clipforge.render.engine import render_single_clip
 from clipforge.render.preview import render_subtitle_preview_frame
 from clipforge.render.scene.schema import SceneGraph
@@ -45,6 +46,8 @@ class ClipResponse(BaseModel):
     qa: dict[str, Any] | None = None
     created_at: str
     project_title: str | None = None
+    editorial_source_path: str | None = None
+    editorial_source_meta: dict[str, Any] | None = None
 
 
 class FinishedClipResponse(BaseModel):
@@ -59,19 +62,21 @@ class FinishedClipResponse(BaseModel):
     width: int = 1080
     height: int = 1920
     subtitles_json: str | None = None
+    editorial_source_path: str | None = None
+    editorial_source_meta: dict[str, Any] | None = None
     created_at: str
     updated_at: str
 
 
 class SubtitlesUpdatePayload(BaseModel):
     words: list[SubtitleWord]
-    style_preset: str | dict[str, Any] = "classic_white"
+    style_preset: str | dict[str, Any] = "none"
     subtitle_position: str = "bottom"
 
 
 class SubtitlesPreviewPayload(BaseModel):
     t_s: float = 1.0
-    style_preset: str | dict[str, Any] = "classic_white"
+    style_preset: str | dict[str, Any] = "none"
     reframe_mode: str = "blur"
     words: list[SubtitleWord] | None = None
     subtitle_position: str = "bottom"
@@ -79,17 +84,18 @@ class SubtitlesPreviewPayload(BaseModel):
 
 def _normalize_style_preset(style: str | dict[str, Any] | None) -> str:
     if isinstance(style, dict):
-        return str(style.get("preset", "classic_white"))
+        return str(style.get("preset", "none"))
     if isinstance(style, str) and style.strip():
         return style.strip()
-    return "classic_white"
+    return "none"
 
 
 async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str, Any] | None:
     """Copy rendered clip files to permanent storage and upsert to finished_clips."""
     query = """
         SELECT c.id, c.candidate_id, c.job_id, c.status, c.video_path, c.thumb_path, c.srt_path,
-               c.width, c.height, c.duration_s, j.title, c.scene_json
+               c.width, c.height, c.duration_s, j.title, c.scene_json,
+               c.editorial_source_path, c.editorial_source_meta_json
         FROM clips c
         LEFT JOIN jobs j ON c.job_id = j.id
         WHERE c.id = ?
@@ -112,6 +118,8 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
         duration_s,
         j_title,
         scene_json,
+        ed_path,
+        ed_meta_json,
     ) = row
 
     # Permanent storage directory for finished clips
@@ -132,6 +140,16 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
                 final_video_path = str(perm_video)
             except Exception as exc:
                 logger.warning("copy_finished_video_failed", clip_id=clip_id, error=str(exc))
+
+    final_ed_path = ed_path or ""
+    if ed_path and Path(ed_path).exists():
+        perm_ed = perm_dir / f"{clip_id}_editorial_source.mp4"
+        try:
+            if not perm_ed.exists() or Path(ed_path).stat().st_mtime > perm_ed.stat().st_mtime:
+                shutil.copy2(Path(ed_path), perm_ed)
+            final_ed_path = str(perm_ed)
+        except Exception:
+            pass
 
     final_srt_path = srt_path or ""
     if srt_path and Path(srt_path).exists():
@@ -175,8 +193,9 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
         """
         INSERT INTO finished_clips (
             id, clip_id, job_id, project_title, video_path, thumb_path, srt_path,
-            duration_s, width, height, subtitles_json, scene_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            duration_s, width, height, subtitles_json, scene_json,
+            editorial_source_path, editorial_source_meta_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             project_title = excluded.project_title,
             video_path = excluded.video_path,
@@ -187,6 +206,8 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
             height = excluded.height,
             subtitles_json = excluded.subtitles_json,
             scene_json = excluded.scene_json,
+            editorial_source_path = excluded.editorial_source_path,
+            editorial_source_meta_json = excluded.editorial_source_meta_json,
             updated_at = excluded.updated_at
         """,
         (
@@ -202,6 +223,8 @@ async def sync_finished_clip(db: aiosqlite.Connection, clip_id: str) -> dict[str
             height or 1920,
             words_json,
             scene_json,
+            final_ed_path,
+            ed_meta_json,
             now_iso,
             now_iso,
         ),
@@ -233,7 +256,7 @@ async def list_all_clips(
     query = """
         SELECT c.id, c.candidate_id, c.job_id, c.status, c.video_path, c.thumb_path, c.srt_path,
                c.width, c.height, c.duration_s, c.render_params_json, c.qa_json, c.created_at,
-               j.title
+               j.title, c.editorial_source_path, c.editorial_source_meta_json
         FROM clips c
         LEFT JOIN jobs j ON c.job_id = j.id
         ORDER BY c.created_at DESC
@@ -258,6 +281,8 @@ async def list_all_clips(
             qa=json.loads(r[11]) if r[11] else None,
             created_at=r[12],
             project_title=r[13],
+            editorial_source_path=r[14] if len(r) > 14 else None,
+            editorial_source_meta=json.loads(r[15]) if len(r) > 15 and r[15] else None,
         )
         for r in rows
     ]
@@ -270,7 +295,8 @@ async def list_finished_clips(
     """Retrieve all permanently finished and saved editorial clips."""
     query = """
         SELECT id, clip_id, job_id, project_title, video_path, thumb_path, srt_path,
-               duration_s, width, height, subtitles_json, created_at, updated_at
+               duration_s, width, height, subtitles_json, created_at, updated_at,
+               editorial_source_path, editorial_source_meta_json
         FROM finished_clips
         ORDER BY updated_at DESC
     """
@@ -292,6 +318,8 @@ async def list_finished_clips(
             subtitles_json=r[10],
             created_at=r[11],
             updated_at=r[12],
+            editorial_source_path=r[13] if len(r) > 13 else None,
+            editorial_source_meta=json.loads(r[14]) if len(r) > 14 and r[14] else None,
         )
         for r in rows
     ]
@@ -389,7 +417,7 @@ async def get_clip(clip_id: str, db: aiosqlite.Connection = Depends(get_db)) -> 
     query = """
         SELECT c.id, c.candidate_id, c.job_id, c.status, c.video_path, c.thumb_path, c.srt_path,
                c.width, c.height, c.duration_s, c.render_params_json, c.qa_json, c.created_at,
-               j.title
+               j.title, c.editorial_source_path, c.editorial_source_meta_json
         FROM clips c
         LEFT JOIN jobs j ON c.job_id = j.id
         WHERE c.id = ?
@@ -401,6 +429,7 @@ async def get_clip(clip_id: str, db: aiosqlite.Connection = Depends(get_db)) -> 
 
         render_params = json.loads(row[10]) if row[10] else {}
         qa = json.loads(row[11]) if row[11] else None
+        ed_meta = json.loads(row[15]) if len(row) > 15 and row[15] else None
 
         return ClipResponse(
             id=row[0],
@@ -417,6 +446,8 @@ async def get_clip(clip_id: str, db: aiosqlite.Connection = Depends(get_db)) -> 
             qa=qa,
             created_at=row[12],
             project_title=row[13],
+            editorial_source_path=row[14] if len(row) > 14 else None,
+            editorial_source_meta=ed_meta,
         )
 
 
@@ -506,10 +537,10 @@ async def get_clip_subtitles(
                     "track_id": f"finished-{clip_id}",
                     "revision": 1,
                     "language": "id",
-                    "style": {"preset": "classic_white"},
+                    "style": {"preset": "none"},
                     "words": saved_words,
                 }
-        return {"clip_id": clip_id, "revision": 0, "words": [], "style": "classic_white"}
+        return {"clip_id": clip_id, "revision": 0, "words": [], "style": "none"}
 
     track_id, revision, style_json, language = (
         track_row[0],
@@ -771,7 +802,7 @@ async def rerender_clip(
                 except Exception:
                     pass
     if not preset_name:
-        preset_name = r_params.get("subtitle_style", "classic_white")
+        preset_name = r_params.get("subtitle_style", "none")
 
     has_subtitles = preset_name.lower() not in (
         "none",
@@ -892,3 +923,158 @@ async def update_clip_scene(
     )
     await db.commit()
     return scene.model_dump()
+
+
+class EditorialSourceRequest(BaseModel):
+    reframe_mode: str | None = None
+
+
+@router.post("/{clip_id}/editorial-source")
+async def create_editorial_source(
+    clip_id: str,
+    payload: EditorialSourceRequest | None = None,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Render or re-render 9:16 editorial_source.mp4 without subtitles and without loudnorm."""
+    async with db.execute(
+        "SELECT job_id, render_params_json, duration_s FROM clips WHERE id = ?", (clip_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Clip not found")
+        job_id, r_params_str, duration_s = row[0], row[1], row[2]
+
+    clip_dir = settings.data_dir / "jobs" / job_id / "clips" / clip_id
+    raw_video = clip_dir / "raw.mp4"
+    if not raw_video.exists():
+        raise HTTPException(status_code=400, detail="Missing raw.mp4 to render editorial source")
+
+    r_params = json.loads(r_params_str) if r_params_str else {}
+    mode = (
+        payload.reframe_mode
+        if payload and payload.reframe_mode
+        else r_params.get("reframe_mode", "blur")
+    )
+
+    res = render_editorial_source(
+        clip_dir=clip_dir,
+        raw_video=raw_video,
+        mode=mode,
+        expected_duration_s=duration_s,
+    )
+
+    if not res["success"] or not res["path"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Editorial source render failed: {res.get('qa', {}).get('errors')}",
+        )
+
+    ed_path = res["path"]
+    ed_meta_json = json.dumps(res["metadata"])
+
+    await db.execute(
+        """
+        UPDATE clips
+        SET editorial_source_path = ?, editorial_source_meta_json = ?
+        WHERE id = ?
+        """,
+        (ed_path, ed_meta_json, clip_id),
+    )
+    await db.commit()
+
+    # Sync to finished_clips
+    await sync_finished_clip(db, clip_id)
+
+    return {
+        "clip_id": clip_id,
+        "status": "ready",
+        "editorial_source_path": ed_path,
+        "metadata": res["metadata"],
+    }
+
+
+@router.get("/{clip_id}/editorial-source")
+async def stream_editorial_source_video(
+    clip_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> FileResponse:
+    """Stream clean 9:16 editorial_source.mp4."""
+    async with db.execute(
+        "SELECT editorial_source_path, job_id, render_params_json, duration_s FROM clips WHERE id = ?",
+        (clip_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            async with db.execute(
+                "SELECT editorial_source_path FROM finished_clips WHERE clip_id = ?", (clip_id,)
+            ) as f_cur:
+                f_row = await f_cur.fetchone()
+                if f_row and f_row[0] and Path(f_row[0]).exists():
+                    return FileResponse(f_row[0], media_type="video/mp4")
+            raise HTTPException(status_code=404, detail="Clip not found")
+
+    ed_path = row[0]
+    if ed_path and Path(ed_path).exists():
+        return FileResponse(ed_path, media_type="video/mp4")
+
+    # If editorial_source hasn't been generated yet, generate on-the-fly from raw.mp4
+    job_id, r_params_str, duration_s = row[1], row[2], row[3]
+    clip_dir = settings.data_dir / "jobs" / job_id / "clips" / clip_id
+    raw_video = clip_dir / "raw.mp4"
+    if not raw_video.exists():
+        raise HTTPException(
+            status_code=404, detail="Editorial source not found and raw.mp4 missing"
+        )
+
+    r_params = json.loads(r_params_str) if r_params_str else {}
+    mode = r_params.get("reframe_mode", "blur")
+
+    res = render_editorial_source(
+        clip_dir=clip_dir,
+        raw_video=raw_video,
+        mode=mode,
+        expected_duration_s=duration_s,
+    )
+    if not res["success"] or not res["path"]:
+        raise HTTPException(
+            status_code=500, detail="Failed to generate editorial source on-the-fly"
+        )
+
+    await db.execute(
+        """
+        UPDATE clips
+        SET editorial_source_path = ?, editorial_source_meta_json = ?
+        WHERE id = ?
+        """,
+        (res["path"], json.dumps(res["metadata"]), clip_id),
+    )
+    await db.commit()
+    await sync_finished_clip(db, clip_id)
+
+    return FileResponse(res["path"], media_type="video/mp4")
+
+
+@router.get("/{clip_id}/editorial-source/meta")
+async def get_editorial_source_meta(
+    clip_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Retrieve metadata and QA inspection result of editorial_source.mp4."""
+    async with db.execute(
+        "SELECT editorial_source_meta_json FROM clips WHERE id = ?", (clip_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        if not row or not row[0]:
+            async with db.execute(
+                "SELECT editorial_source_meta_json FROM finished_clips WHERE clip_id = ?",
+                (clip_id,),
+            ) as f_cur:
+                f_row = await f_cur.fetchone()
+                if f_row and f_row[0]:
+                    row = f_row
+                else:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Editorial source metadata not found for this clip",
+                    )
+    return json.loads(row[0])

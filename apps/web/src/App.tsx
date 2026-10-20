@@ -127,7 +127,7 @@ export default function App(): JSX.Element {
   const [studioCandidate, setStudioCandidate] = useState<Candidate | null>(null);
 
   // Render configuration for candidate processing
-  const [renderSubtitleStyle, setRenderSubtitleStyle] = useState<string>("classic_white");
+  const [renderSubtitleStyle, setRenderSubtitleStyle] = useState<string>("none");
   const [renderSubtitlePosition, setRenderSubtitlePosition] = useState<string>("bottom");
   const [renderReframeMode, setRenderReframeMode] = useState<string>("blur");
 

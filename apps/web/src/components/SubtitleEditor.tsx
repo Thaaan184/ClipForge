@@ -83,7 +83,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
   const getInitialPreset = (style: any): string => {
     if (typeof style === "string" && style.trim()) return style;
     if (style && typeof style === "object" && style.preset) return String(style.preset);
-    return "classic_white";
+    return "none";
   };
 
   const getInitialPosition = (track: SubtitleTrack): "bottom" | "top" => {
@@ -732,13 +732,13 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
             onChange={(e) => setStylePreset(e.target.value)}
             className="w-full px-3 py-2 bg-card border border-line text-copy text-xs focus:outline-none focus:border-action"
           >
+            <option value="none">Tanpa Subtitle (Default)</option>
             <option value="classic_white">Classic White (Putih)</option>
             <option value="fire_orange">Fire Orange (Oranye)</option>
             <option value="hormozi_bold">Hormozi Bold (Kuning/Hijau)</option>
             <option value="mrbeast_box">MrBeast Box (Bold Gold)</option>
             <option value="neon_glow">Neon Glow (Cyan/Magenta)</option>
             <option value="minimal_clean">Minimal Clean (Putih Minimalis)</option>
-            <option value="none">Tanpa Subtitle (No Subtitle)</option>
           </select>
         </div>
 
