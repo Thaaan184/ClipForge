@@ -112,9 +112,9 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 border border-slate-800 rounded-lg overflow-hidden text-slate-200">
+    <div className="flex flex-col h-full min-h-0 bg-slate-900 border border-slate-800 rounded-lg overflow-hidden text-slate-200">
       {/* Autopilot Command Bar (PLAN.md P4 Task 4) */}
-      <div className="p-3 bg-slate-950/90 border-b border-slate-800 flex flex-col gap-2.5">
+      <div className="shrink-0 p-3 bg-slate-950/90 border-b border-slate-800 flex flex-col gap-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-yellow-400" />
@@ -192,7 +192,7 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
       </div>
 
       {/* Messages Scroll Area */}
-      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 min-h-[220px]">
+      <div className="flex-1 min-h-0 p-4 overflow-y-auto flex flex-col gap-3">
         {messages.length === 0 ? (
           <div className="my-auto text-center flex flex-col items-center gap-2 text-slate-500 py-6">
             <Bot className="w-8 h-8 text-slate-600" />
@@ -252,7 +252,7 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
       </div>
 
       {/* Quick Chips */}
-      <div className="px-3 py-2 bg-slate-950/40 border-t border-slate-800/80 flex items-center gap-1.5 overflow-x-auto text-[11px]">
+      <div className="shrink-0 px-3 py-2 bg-slate-950/40 border-t border-slate-800/80 flex items-center gap-1.5 overflow-x-auto text-[11px]">
         <span className="text-slate-500 shrink-0 text-[10px] font-semibold uppercase">
           Cepat:
         </span>
@@ -268,7 +268,7 @@ export const EditorialChat: React.FC<EditorialChatProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="p-3 bg-slate-950 border-t border-slate-800 flex flex-col gap-2">
+      <div className="shrink-0 p-3 bg-slate-950 border-t border-slate-800 flex flex-col gap-2">
         {/* Mention Helper Popover */}
         {showMentionMenu && assets.length > 0 && (
           <div className="bg-slate-900 border border-slate-700 rounded-lg p-1.5 shadow-xl flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">

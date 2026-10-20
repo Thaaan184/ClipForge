@@ -605,10 +605,10 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       )}
 
       {/* Main Studio Split Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch lg:h-[760px]">
         {/* Left Column: 9:16 Preview Player & Controls (5 Cols) */}
-        <div className="lg:col-span-5 flex flex-col gap-3 bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-md">
-          <div className="flex items-center justify-between">
+        <div className="lg:col-span-5 flex flex-col justify-between h-full bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-md">
+          <div className="flex items-center justify-between shrink-0 mb-2">
             <div className="flex items-center gap-2">
               <Eye className="w-4 h-4 text-indigo-400" />
               <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
@@ -628,7 +628,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           </div>
 
           {/* Video Canvas Container (9:16 Aspect Ratio) */}
-          <div className="relative w-full aspect-[9/16] max-h-[580px] mx-auto bg-black rounded-lg overflow-hidden border border-slate-800 shadow-inner flex items-center justify-center">
+          <div className="relative w-full flex-1 min-h-0 aspect-[9/16] max-h-[640px] mx-auto bg-black rounded-lg overflow-hidden border border-slate-800 shadow-inner flex items-center justify-center">
             <video
               ref={videoRef}
               src={previewUrl}
@@ -675,7 +675,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           </div>
 
           {/* Time & Comment in Current Second Button */}
-          <div className="flex items-center justify-between pt-1">
+          <div className="flex items-center justify-between pt-2 shrink-0 border-t border-slate-800/60 mt-2">
             <div className="flex items-center gap-2 text-xs font-mono text-slate-300">
               <Clock className="w-3.5 h-3.5 text-slate-500" />
               <span>
@@ -695,9 +695,9 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
         </div>
 
         {/* Right Column: Studio Panels & Chat (7 Cols) */}
-        <div className="lg:col-span-7 flex flex-col gap-3">
+        <div className="lg:col-span-7 flex flex-col gap-3 h-full min-h-0">
           {/* Studio Navigation Tabs */}
-          <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 p-1.5 rounded-xl">
+          <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 p-1.5 rounded-xl shrink-0">
             <button
               onClick={() => setActiveTab("chat")}
               className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition ${
@@ -736,7 +736,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           </div>
 
           {/* Active Tab Content Area */}
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-md min-h-[500px]">
+          <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl shadow-md flex-1 min-h-0 flex flex-col overflow-hidden">
             {session && activeTab === "chat" && (
               <EditorialChat
                 sessionId={session.id}

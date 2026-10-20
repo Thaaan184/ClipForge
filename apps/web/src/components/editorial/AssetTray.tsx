@@ -177,7 +177,7 @@ export const AssetTray: React.FC<AssetTrayProps> = ({
   };
 
   return (
-    <div className="flex flex-col gap-4 text-slate-200">
+    <div className="flex flex-col gap-4 text-slate-200 h-full min-h-0 overflow-y-auto pr-1">
       {/* Upload Zone */}
       <div
         onDragOver={(e) => {

@@ -17,8 +17,8 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
   isRestoring,
 }) => {
   return (
-    <div className="flex flex-col gap-3 text-slate-200">
-      <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+    <div className="flex flex-col gap-3 text-slate-200 h-full min-h-0">
+      <div className="flex items-center justify-between border-b border-slate-800 pb-2 shrink-0">
         <div className="flex items-center gap-2">
           <History className="w-4 h-4 text-indigo-400" />
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
@@ -35,7 +35,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
           Belum ada riwayat versi. Versi pertama dibuat saat inisialisasi sesi.
         </div>
       ) : (
-        <div className="flex flex-col gap-2 max-h-[360px] overflow-y-auto pr-1">
+        <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto pr-1">
           {versions.map((ver) => {
             const isCurrent = ver.version_num === currentVersion;
 
