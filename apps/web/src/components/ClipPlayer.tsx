@@ -6,6 +6,7 @@ import {
   Download,
   FileText,
   Film,
+  Sparkles,
   Video,
   XCircle,
 } from "lucide-react";
@@ -13,11 +14,13 @@ import {
 interface ClipPlayerProps {
   clip: Clip;
   onEditSubtitles?: () => void;
+  onOpenEditorial?: (clipId: string) => void;
 }
 
 export const ClipPlayer: React.FC<ClipPlayerProps> = ({
   clip,
   onEditSubtitles,
+  onOpenEditorial,
 }) => {
   const videoUrl = getClipVideoUrl(clip.id);
   const srtUrl = getClipSrtUrl(clip.id);
@@ -121,6 +124,17 @@ export const ClipPlayer: React.FC<ClipPlayerProps> = ({
 
         {/* Buttons */}
         <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-line">
+          {onOpenEditorial && (
+            <button
+              onClick={() => onOpenEditorial(clip.id)}
+              className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded transition shadow-sm"
+              title="Buka studio komposisi Remotion & Aset"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+              <span>EDITORIAL STUDIO</span>
+            </button>
+          )}
+
           {onEditSubtitles && (
             <button
               onClick={onEditSubtitles}

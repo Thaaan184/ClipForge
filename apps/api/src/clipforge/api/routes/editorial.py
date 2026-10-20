@@ -17,9 +17,14 @@ from clipforge.editorial.leak_guard import audit_workspace_security
 from clipforge.editorial.manifest import build_editorial_manifest, save_manifest
 from clipforge.editorial.models import (
     EditorialAssetResponse,
+    EditorialAssetUpdate,
+    EditorialMessageCreate,
+    EditorialMessageResponse,
     EditorialSessionCreate,
     EditorialSessionResponse,
+    EditorialStatusResponse,
     EditorialVersionResponse,
+    ManifestAsset,
 )
 from clipforge.editorial.pipeline import (
     RENDER_SEMAPHORE,
@@ -371,11 +376,467 @@ async def stream_preview_video(session_id: str) -> FileResponse:
     return FileResponse(preview_file, media_type="video/mp4")
 
 
-@router.get("/sessions/{session_id}/final.mp4")
-async def download_final_video(session_id: str) -> FileResponse:
-    """Download final rendered video with EBU R128 audio."""
+@router.get("/sessions/{session_id}/status", response_model=EditorialStatusResponse)
+async def get_editorial_status(
+    session_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> EditorialStatusResponse:
+    """Retrieve lightweight status of an editorial session for UI polling."""
+    async with db.execute(
+        """
+        SELECT id, status, current_version, error_message, failed_stage
+        FROM editorial_sessions
+        WHERE id = ?
+        """,
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Sesi editorial tidak ditemukan")
+
+    status = row[1]
+    is_rendering = status in ("RENDERING_FINAL", "AUDIO_NORMALIZING", "QA", "AGENT_WORKING")
+
+    return EditorialStatusResponse(
+        session_id=row[0],
+        status=status,
+        current_version=row[2],
+        error_message=row[3],
+        failed_stage=row[4],
+        is_rendering=is_rendering,
+    )
+
+
+ALLOWED_ASSET_EXTS = {
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".mp3": "audio",
+    ".wav": "audio",
+    ".m4a": "audio",
+    ".aac": "audio",
+    ".mp4": "video",
+    ".webm": "video",
+    ".mov": "video",
+}
+MAX_ASSET_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def probe_asset_metadata(file_path: Path) -> dict[str, Any]:
+    """Run ffprobe on uploaded asset to extract technical properties."""
+    import subprocess
+    cmd = [
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        str(file_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return {"valid": False, "error": "Berkas media rusak atau format tidak didukung"}
+
+    try:
+        data = json.loads(proc.stdout)
+        duration_s = float(data.get("format", {}).get("duration", 0.0))
+        streams = data.get("streams", [])
+        v_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+        a_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+        width = int(v_stream.get("width", 0)) if v_stream else None
+        height = int(v_stream.get("height", 0)) if v_stream else None
+        return {
+            "valid": True,
+            "duration_s": duration_s,
+            "width": width,
+            "height": height,
+            "has_audio": a_stream is not None,
+            "has_video": v_stream is not None,
+        }
+    except Exception as exc:
+        return {"valid": False, "error": str(exc)}
+
+
+async def reload_and_sync_manifest_assets(session_id: str, ws_dir: Path, db: aiosqlite.Connection) -> None:
+    """Fetch all active assets from DB and write to context/manifest.json."""
+    async with db.execute(
+        """
+        SELECT id, type, path, label, hint, duration_s, bpm, meta_json
+        FROM editorial_assets
+        WHERE session_id = ?
+        ORDER BY created_at ASC
+        """,
+        (session_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    manifest_path = ws_dir / "context" / "manifest.json"
+    if manifest_path.exists():
+        try:
+            m_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            m_data["assets"] = [
+                {
+                    "id": r[0],
+                    "type": r[1],
+                    "path": r[2],
+                    "label": r[3] or "",
+                    "hint": r[4] or "",
+                    "description": "",
+                    "duration": float(r[5] or 0.0),
+                    "bpm": float(r[6]) if r[6] is not None else None,
+                }
+                for r in rows
+            ]
+            manifest_path.write_text(json.dumps(m_data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+
+@router.get("/sessions/{session_id}/assets", response_model=list[EditorialAssetResponse])
+async def list_editorial_assets(
+    session_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> list[EditorialAssetResponse]:
+    """List all assets uploaded to this editorial session."""
+    async with db.execute(
+        """
+        SELECT id, session_id, filename, type, path, label, hint, duration_s, bpm, created_at
+        FROM editorial_assets
+        WHERE session_id = ?
+        ORDER BY created_at ASC
+        """,
+        (session_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    return [
+        EditorialAssetResponse(
+            id=r[0],
+            session_id=r[1],
+            filename=r[2],
+            type=r[3],
+            path=r[4],
+            label=r[5],
+            hint=r[6],
+            duration_s=r[7] or 0.0,
+            bpm=r[8],
+            created_at=r[9],
+        )
+        for r in rows
+    ]
+
+
+@router.post("/sessions/{session_id}/assets", response_model=EditorialAssetResponse, status_code=201)
+async def upload_editorial_asset(
+    session_id: str,
+    file: UploadFile = File(...),
+    label: str = Form(""),
+    hint: str = Form(""),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> EditorialAssetResponse:
+    """Upload photo/audio/video asset with validation, sanitization, and metadata indexing."""
     ws_dir = get_workspace_dir(session_id)
-    final_file = ws_dir / "final_editorial.mp4"
-    if not final_file.exists():
-        raise HTTPException(status_code=404, detail="Final video not found")
-    return FileResponse(final_file, media_type="video/mp4", filename=f"{session_id}_final.mp4")
+    if not ws_dir.exists():
+        raise HTTPException(status_code=404, detail="Sesi atau direktori workspace tidak ditemukan")
+
+    raw_filename = file.filename or "uploaded_asset"
+    ext = Path(raw_filename).suffix.lower()
+    if ext not in ALLOWED_ASSET_EXTS:
+        allowed_list = ", ".join(ALLOWED_ASSET_EXTS.keys())
+        raise HTTPException(
+            status_code=400,
+            detail=f"Format berkas '{ext}' tidak didukung. Format yang diizinkan: {allowed_list}",
+        )
+
+    asset_type = ALLOWED_ASSET_EXTS[ext]
+    asset_id = f"ast_{uuid.uuid4().hex[:8]}"
+    # RULES §7.7: Always sanitize to asset_{id}.{ext} to prevent directory traversal & shell injection
+    sanitized_filename = f"asset_{asset_id}{ext}"
+    assets_dir = ws_dir / "public" / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    target_path = assets_dir / sanitized_filename
+
+    # Read and validate size
+    content = await file.read()
+    if len(content) > MAX_ASSET_SIZE_BYTES:
+        max_mb = MAX_ASSET_SIZE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ukuran berkas melebihi batas maksimum {max_mb} MB (terbaca {len(content) / (1024*1024):.1f} MB)",
+        )
+
+    target_path.write_bytes(content)
+
+    # Validate with ffprobe (RULES §7.8)
+    probe = probe_asset_metadata(target_path)
+    if not probe["valid"]:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=probe.get("error", "Validasi media gagal"))
+
+    rel_manifest_path = f"public/assets/{sanitized_filename}"
+    now_iso = datetime.now(UTC).isoformat()
+    duration_s = probe.get("duration_s", 0.0)
+    meta_json = json.dumps(probe)
+    clean_label = label.strip() or Path(raw_filename).stem
+
+    await db.execute(
+        """
+        INSERT INTO editorial_assets (
+            id, session_id, filename, type, path, label, hint, duration_s, meta_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            asset_id,
+            session_id,
+            raw_filename,
+            asset_type,
+            rel_manifest_path,
+            clean_label,
+            hint.strip(),
+            duration_s,
+            meta_json,
+            now_iso,
+        ),
+    )
+    await db.commit()
+
+    # Sync manifest.json
+    await reload_and_sync_manifest_assets(session_id, ws_dir, db)
+
+    return EditorialAssetResponse(
+        id=asset_id,
+        session_id=session_id,
+        filename=raw_filename,
+        type=asset_type,
+        path=rel_manifest_path,
+        label=clean_label,
+        hint=hint.strip(),
+        duration_s=duration_s,
+        bpm=None,
+        created_at=now_iso,
+    )
+
+
+@router.patch("/sessions/{session_id}/assets/{asset_id}", response_model=EditorialAssetResponse)
+async def update_editorial_asset(
+    session_id: str,
+    asset_id: str,
+    payload: EditorialAssetUpdate,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> EditorialAssetResponse:
+    """Update label or hint for an asset."""
+    ws_dir = get_workspace_dir(session_id)
+    async with db.execute(
+        "SELECT id, session_id, filename, type, path, label, hint, duration_s, bpm, created_at FROM editorial_assets WHERE id = ? AND session_id = ?",
+        (asset_id, session_id),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Aset tidak ditemukan")
+
+    new_label = payload.label.strip() if payload.label is not None else row[5]
+    new_hint = payload.hint.strip() if payload.hint is not None else row[6]
+
+    await db.execute(
+        "UPDATE editorial_assets SET label = ?, hint = ? WHERE id = ?",
+        (new_label, new_hint, asset_id),
+    )
+    await db.commit()
+
+    await reload_and_sync_manifest_assets(session_id, ws_dir, db)
+
+    return EditorialAssetResponse(
+        id=row[0],
+        session_id=row[1],
+        filename=row[2],
+        type=row[3],
+        path=row[4],
+        label=new_label,
+        hint=new_hint,
+        duration_s=row[7] or 0.0,
+        bpm=row[8],
+        created_at=row[9],
+    )
+
+
+@router.delete("/sessions/{session_id}/assets/{asset_id}")
+async def delete_editorial_asset(
+    session_id: str,
+    asset_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Delete asset from workspace filesystem and database."""
+    ws_dir = get_workspace_dir(session_id)
+    async with db.execute(
+        "SELECT path FROM editorial_assets WHERE id = ? AND session_id = ?",
+        (asset_id, session_id),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Aset tidak ditemukan")
+        asset_rel_path = row[0]
+
+    # Delete physical file
+    phys_file = ws_dir / asset_rel_path
+    phys_file.unlink(missing_ok=True)
+
+    await db.execute("DELETE FROM editorial_assets WHERE id = ?", (asset_id,))
+    await db.commit()
+
+    await reload_and_sync_manifest_assets(session_id, ws_dir, db)
+
+    return {"success": True, "asset_id": asset_id}
+
+
+@router.get("/sessions/{session_id}/assets/{asset_id}/file")
+async def get_editorial_asset_file(
+    session_id: str,
+    asset_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> FileResponse:
+    """Serve asset media file for browser preview or audio player."""
+    ws_dir = get_workspace_dir(session_id)
+    async with db.execute(
+        "SELECT path, type FROM editorial_assets WHERE id = ? AND session_id = ?",
+        (asset_id, session_id),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Aset tidak ditemukan")
+        rel_path = row[0]
+
+    target_file = ws_dir / rel_path
+    if not target_file.exists():
+        raise HTTPException(status_code=404, detail="Berkas aset tidak ditemukan di disk")
+    return FileResponse(target_file)
+
+
+@router.post("/sessions/{session_id}/versions/{version_num}/restore")
+async def restore_editorial_version(
+    session_id: str,
+    version_num: int,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Restore workspace git state to target version and generate fresh preview."""
+    ws_dir = get_workspace_dir(session_id)
+    if not ws_dir.exists():
+        raise HTTPException(status_code=404, detail="Workspace tidak ditemukan")
+
+    async with db.execute(
+        "SELECT commit_sha, summary FROM editorial_versions WHERE session_id = ? AND version_num = ?",
+        (session_id, version_num),
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Versi {version_num} tidak ditemukan")
+        commit_sha, summary = row[0], row[1]
+
+    # Restore workspace to git commit SHA
+    restore_workspace_version(ws_dir, commit_sha)
+
+    # Re-render preview for this version
+    out_preview = ws_dir / "preview.mp4"
+    res = await worker_client.render_preview(
+        workspace_dir=ws_dir,
+        output_path=out_preview,
+        concurrency=2,
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=f"Render preview untuk versi {version_num} gagal: {res.get('error')}")
+
+    now_iso = datetime.now(UTC).isoformat()
+    await db.execute(
+        """
+        UPDATE editorial_sessions
+        SET current_version = ?, status = 'PREVIEW_READY', updated_at = ?
+        WHERE id = ?
+        """,
+        (version_num, now_iso, session_id),
+    )
+    await db.commit()
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "restored_version": version_num,
+        "commit_sha": commit_sha,
+        "preview_path": str(out_preview),
+    }
+
+
+@router.get("/sessions/{session_id}/messages", response_model=list[EditorialMessageResponse])
+async def list_editorial_messages(
+    session_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> list[EditorialMessageResponse]:
+    """Retrieve chat message history for an editorial session."""
+    async with db.execute(
+        """
+        SELECT id, session_id, sender, text, mode, meta_json, created_at
+        FROM editorial_messages
+        WHERE session_id = ?
+        ORDER BY created_at ASC
+        """,
+        (session_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    return [
+        EditorialMessageResponse(
+            id=r[0],
+            session_id=r[1],
+            sender=r[2],
+            text=r[3],
+            mode=r[4],
+            metadata=json.loads(r[5]) if r[5] else None,
+            created_at=r[6],
+        )
+        for r in rows
+    ]
+
+
+@router.post("/sessions/{session_id}/messages", response_model=EditorialMessageResponse, status_code=201)
+async def send_editorial_message(
+    session_id: str,
+    payload: EditorialMessageCreate,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> EditorialMessageResponse:
+    """Send a user message in editorial studio. P3 stub echoes response."""
+    now_iso = datetime.now(UTC).isoformat()
+    msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+
+    meta = {"timestamps": payload.timestamps} if payload.timestamps else {}
+
+    # 1. Record user message
+    await db.execute(
+        """
+        INSERT INTO editorial_messages (id, session_id, sender, text, mode, meta_json, created_at)
+        VALUES (?, ?, 'user', ?, ?, ?, ?)
+        """,
+        (msg_id, session_id, payload.text, payload.mode, json.dumps(meta), now_iso),
+    )
+
+    # 2. Record agent stub echo response (P3 requirement: stub echo)
+    agent_msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+    reply_text = f"Pesan diterima: \"{payload.text}\". (Mode Editorial Studio P3 aktif dengan komposisi manual. AI Autopilot tool-loop akan aktif di P4)."
+    await db.execute(
+        """
+        INSERT INTO editorial_messages (id, session_id, sender, text, mode, meta_json, created_at)
+        VALUES (?, ?, 'agent', ?, ?, '{}', ?)
+        """,
+        (agent_msg_id, session_id, reply_text, payload.mode, now_iso),
+    )
+    await db.commit()
+
+    return EditorialMessageResponse(
+        id=agent_msg_id,
+        session_id=session_id,
+        sender="agent",
+        text=reply_text,
+        mode=payload.mode,
+        metadata={},
+        created_at=now_iso,
+    )
