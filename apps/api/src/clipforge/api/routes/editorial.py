@@ -1233,33 +1233,25 @@ async def restore_editorial_version(
     # Restore workspace to git commit SHA
     restore_workspace_version(ws_dir, commit_sha)
 
-    # Re-render preview for this version
-    out_preview = ws_dir / "preview.mp4"
-    res = await worker_client.render_preview(
-        workspace_dir=ws_dir,
-        output_path=out_preview,
-        concurrency=2,
-    )
-    if not res.get("success"):
-        raise HTTPException(status_code=500, detail=f"Render preview untuk versi {version_num} gagal: {res.get('error')}")
-
     now_iso = datetime.now(UTC).isoformat()
     await db.execute(
         """
         UPDATE editorial_sessions
-        SET current_version = ?, status = 'PREVIEW_READY', updated_at = ?
+        SET current_version = ?, status = 'RENDERING_PREVIEW', error_message = NULL, failed_stage = NULL, updated_at = ?
         WHERE id = ?
         """,
         (version_num, now_iso, session_id),
     )
     await db.commit()
 
+    asyncio.create_task(_execute_preview_render(session_id))
+
     return {
         "success": True,
         "session_id": session_id,
         "restored_version": version_num,
         "commit_sha": commit_sha,
-        "preview_path": str(out_preview),
+        "status": "RENDERING_PREVIEW",
     }
 
 
@@ -1373,9 +1365,105 @@ async def send_editorial_message(
     )
 
 
+async def _execute_autopilot(session_id: str) -> dict[str, Any]:
+    """Execute Autopilot AI tool-loop in background worker and update database."""
+    ws_dir = get_workspace_dir(session_id)
+    from clipforge.db.connection import get_db_connection
+
+    async with get_db_connection() as db:
+        try:
+            # Run agent loop
+            result = await run_autopilot_agent(workspace_dir=ws_dir, session_id=session_id)
+
+            if not result.get("success"):
+                err = result.get("error", "Autopilot gagal dijalankan")
+                stage = result.get("stage", "AGENT_WORKING")
+                now_iso = datetime.now(UTC).isoformat()
+                await db.execute(
+                    """
+                    UPDATE editorial_sessions
+                    SET status = 'FAILED', failed_stage = ?, error_message = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (stage, err, now_iso, session_id),
+                )
+                # Record failure message
+                msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+                await db.execute(
+                    """
+                    INSERT INTO editorial_messages (id, session_id, sender, text, mode, meta_json, created_at)
+                    VALUES (?, ?, 'agent', ?, 'autopilot', '{}', ?)
+                    """,
+                    (msg_id, session_id, f"⚠️ Autopilot gagal pada tahap {stage}: {err}", now_iso),
+                )
+                await db.commit()
+                return {"success": False, "error": err}
+
+            # Success: record new version and update session
+            commit_sha = result["commit_sha"]
+            async with db.execute(
+                "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
+                (session_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                next_ver = (row[0] or 1) + 1
+
+            ver_id = f"ver_{commit_sha[:8]}"
+            summary = f"v{next_ver}: Autopilot gaming_hype composition ({result['duration_s']}s)"
+            now_done = datetime.now(UTC).isoformat()
+
+            await db.execute(
+                """
+                INSERT INTO editorial_versions (id, session_id, version_num, commit_sha, summary, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (ver_id, session_id, next_ver, commit_sha, summary, now_done),
+            )
+            await db.execute(
+                """
+                UPDATE editorial_sessions
+                SET status = 'PREVIEW_READY', current_version = ?, error_message = NULL, failed_stage = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (next_ver, now_done, session_id),
+            )
+
+            # Record agent summary chat message
+            msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+            chat_summary = f"✨ Autopilot selesai ({result['duration_s']}s)! Komposisi v{next_ver} siap ditinjau dengan subtitle kinetic, efek punch zoom pada puncak sinyal, dan hook intro callout."
+            await db.execute(
+                """
+                INSERT INTO editorial_messages (id, session_id, sender, text, mode, meta_json, created_at)
+                VALUES (?, ?, 'agent', ?, 'autopilot', ?, ?)
+                """,
+                (msg_id, session_id, chat_summary, json.dumps(result), now_done),
+            )
+            await db.commit()
+
+            return {
+                "success": True,
+                "session_id": session_id,
+                "version": next_ver,
+                "commit_sha": commit_sha,
+                "duration_s": result["duration_s"],
+                "message": chat_summary,
+            }
+        except Exception as exc:
+            logger.exception("autopilot_background_failed", exc_info=exc)
+            err = str(exc)
+            now_iso = datetime.now(UTC).isoformat()
+            await db.execute(
+                "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'AUTOPILOT', error_message = ?, updated_at = ? WHERE id = ?",
+                (err, now_iso, session_id),
+            )
+            await db.commit()
+            return {"success": False, "error": err}
+
+
 @router.post("/sessions/{session_id}/autopilot")
 async def run_editorial_autopilot(
     session_id: str,
+    background: bool = Query(True),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """Execute Autopilot AI tool-loop: compiles manifest, synthesizes Remotion TSX, typechecks, renders still & preview."""
@@ -1386,86 +1474,24 @@ async def run_editorial_autopilot(
     # Set status to AGENT_WORKING
     now_iso = datetime.now(UTC).isoformat()
     await db.execute(
-        "UPDATE editorial_sessions SET status = 'AGENT_WORKING', updated_at = ? WHERE id = ?",
+        "UPDATE editorial_sessions SET status = 'AGENT_WORKING', error_message = NULL, failed_stage = NULL, updated_at = ? WHERE id = ?",
         (now_iso, session_id),
     )
     await db.commit()
 
-    # Run agent loop
-    result = await run_autopilot_agent(workspace_dir=ws_dir, session_id=session_id)
+    if background:
+        asyncio.create_task(_execute_autopilot(session_id))
+        return {
+            "success": True,
+            "session_id": session_id,
+            "status": "AGENT_WORKING",
+            "message": "Autopilot dimulai di latar belakang",
+        }
 
-    if not result.get("success"):
-        err = result.get("error", "Autopilot gagal dijalankan")
-        stage = result.get("stage", "AGENT_WORKING")
-        await db.execute(
-            """
-            UPDATE editorial_sessions
-            SET status = 'FAILED', failed_stage = ?, error_message = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (stage, err, datetime.now(UTC).isoformat(), session_id),
-        )
-        # Record failure message
-        msg_id = f"msg_{uuid.uuid4().hex[:8]}"
-        await db.execute(
-            """
-            INSERT INTO editorial_messages (id, session_id, sender, text, mode, meta_json, created_at)
-            VALUES (?, ?, 'agent', ?, 'autopilot', '{}', ?)
-            """,
-            (msg_id, session_id, f"⚠️ Autopilot gagal pada tahap {stage}: {err}", datetime.now(UTC).isoformat()),
-        )
-        await db.commit()
-        raise HTTPException(status_code=500, detail=err)
-
-    # Success: record new version and update session
-    commit_sha = result["commit_sha"]
-    async with db.execute(
-        "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
-        (session_id,),
-    ) as cur:
-        row = await cur.fetchone()
-        next_ver = (row[0] or 1) + 1
-
-    ver_id = f"ver_{commit_sha[:8]}"
-    summary = f"v{next_ver}: Autopilot gaming_hype composition ({result['duration_s']}s)"
-    now_done = datetime.now(UTC).isoformat()
-
-    await db.execute(
-        """
-        INSERT INTO editorial_versions (id, session_id, version_num, commit_sha, summary, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (ver_id, session_id, next_ver, commit_sha, summary, now_done),
-    )
-    await db.execute(
-        """
-        UPDATE editorial_sessions
-        SET status = 'PREVIEW_READY', current_version = ?, updated_at = ?
-        WHERE id = ?
-        """,
-        (next_ver, now_done, session_id),
-    )
-
-    # Record agent summary chat message
-    msg_id = f"msg_{uuid.uuid4().hex[:8]}"
-    chat_summary = f"✨ Autopilot selesai ({result['duration_s']}s)! Komposisi v{next_ver} siap ditinjau dengan subtitle kinetic, efek punch zoom pada puncak sinyal, dan hook intro callout."
-    await db.execute(
-        """
-        INSERT INTO editorial_messages (id, session_id, sender, text, mode, meta_json, created_at)
-        VALUES (?, ?, 'agent', ?, 'autopilot', ?, ?)
-        """,
-        (msg_id, session_id, chat_summary, json.dumps(result), now_done),
-    )
-    await db.commit()
-
-    return {
-        "success": True,
-        "session_id": session_id,
-        "version": next_ver,
-        "commit_sha": commit_sha,
-        "duration_s": result["duration_s"],
-        "message": chat_summary,
-    }
+    res = await _execute_autopilot(session_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "Autopilot gagal dijalankan"))
+    return res
 
 
 @router.get("/sessions/{session_id}/code")
@@ -1507,11 +1533,6 @@ async def update_editorial_code(
     if not tc.get("success"):
         raise HTTPException(status_code=400, detail=f"Typecheck gagal: {tc.get('errors')}")
 
-    # Re-render preview
-    prev = await worker_client.render_preview(ws_dir, ws_dir / "preview.mp4", concurrency=2)
-    if not prev.get("success"):
-        raise HTTPException(status_code=500, detail=f"Render preview gagal: {prev.get('error')}")
-
     # Commit version
     sha = commit_workspace_version(ws_dir, "manual edit via code drawer")
     async with db.execute(
@@ -1527,12 +1548,14 @@ async def update_editorial_code(
         (f"ver_{sha[:8]}", session_id, next_ver, sha, f"v{next_ver}: Manual code edit", now_iso),
     )
     await db.execute(
-        "UPDATE editorial_sessions SET current_version = ?, status = 'PREVIEW_READY', updated_at = ? WHERE id = ?",
+        "UPDATE editorial_sessions SET current_version = ?, status = 'RENDERING_PREVIEW', error_message = NULL, failed_stage = NULL, updated_at = ? WHERE id = ?",
         (next_ver, now_iso, session_id),
     )
     await db.commit()
 
-    return {"success": True, "version": next_ver, "commit_sha": sha}
+    asyncio.create_task(_execute_preview_render(session_id))
+
+    return {"success": True, "version": next_ver, "commit_sha": sha, "status": "RENDERING_PREVIEW"}
 
 
 # ==========================================
@@ -1583,8 +1606,6 @@ async def apply_style_pack_to_session(
     if not tc.get("success"):
         raise HTTPException(status_code=400, detail=f"Typecheck gagal: {tc.get('errors')}")
 
-    await worker_client.render_preview(ws_dir, ws_dir / "preview.mp4", concurrency=4)
-
     sha = commit_workspace_version(ws_dir, f"style-pack: applied {pack['label']}")
     async with db.execute(
         "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
@@ -1599,11 +1620,14 @@ async def apply_style_pack_to_session(
         (f"ver_{sha[:8]}", session_id, next_ver, sha, f"v{next_ver}: Terapkan gaya {pack['label']}", now_iso),
     )
     await db.execute(
-        "UPDATE editorial_sessions SET current_version = ?, status = 'PREVIEW_READY', updated_at = ? WHERE id = ?",
+        "UPDATE editorial_sessions SET current_version = ?, status = 'RENDERING_PREVIEW', error_message = NULL, failed_stage = NULL, updated_at = ? WHERE id = ?",
         (next_ver, now_iso, session_id),
     )
     await db.commit()
-    return {"success": True, "style_pack": pack_name, "version": next_ver, "commit_sha": sha}
+
+    asyncio.create_task(_execute_preview_render(session_id))
+
+    return {"success": True, "style_pack": pack_name, "version": next_ver, "commit_sha": sha, "status": "RENDERING_PREVIEW"}
 
 
 @router.post("/sessions/{session_id}/script")
@@ -1664,8 +1688,6 @@ async def submit_editorial_script(
     if not tc.get("success"):
         raise HTTPException(status_code=400, detail=f"Typecheck gagal: {tc.get('errors')}")
 
-    await worker_client.render_preview(ws_dir, ws_dir / "preview.mp4", concurrency=4)
-
     sha = commit_workspace_version(ws_dir, f"script-mode ({mode}): aligned {beat_sheet.aligned_lines}/{beat_sheet.total_lines} lines")
     async with db.execute(
         "SELECT MAX(version_num) FROM editorial_versions WHERE session_id = ?",
@@ -1681,16 +1703,19 @@ async def submit_editorial_script(
         (f"ver_{sha[:8]}", session_id, next_ver, sha, summary, now_iso),
     )
     await db.execute(
-        "UPDATE editorial_sessions SET current_version = ?, status = 'PREVIEW_READY', updated_at = ? WHERE id = ?",
+        "UPDATE editorial_sessions SET current_version = ?, status = 'RENDERING_PREVIEW', error_message = NULL, failed_stage = NULL, updated_at = ? WHERE id = ?",
         (next_ver, now_iso, session_id),
     )
     await db.commit()
+
+    asyncio.create_task(_execute_preview_render(session_id))
 
     return {
         "success": True,
         "beat_sheet": beat_sheet.model_dump(),
         "version": next_ver,
         "commit_sha": sha,
+        "status": "RENDERING_PREVIEW",
     }
 
 

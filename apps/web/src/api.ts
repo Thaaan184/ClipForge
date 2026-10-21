@@ -742,7 +742,7 @@ export async function sendEditorialMessage(
 }
 
 export async function runEditorialAutopilot(sessionId: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/autopilot`, {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/autopilot?background=true`, {
     method: "POST",
   });
   if (!res.ok) {

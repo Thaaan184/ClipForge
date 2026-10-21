@@ -192,15 +192,24 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
               rendered: st.rendered_frames ?? null,
               total: st.total_frames ?? null,
             });
+          } else if (st.status === "AGENT_WORKING") {
+            setIsAutopilotWorking(true);
+            setPreviewProgress({
+              percent: Math.round(st.progress_percent ?? 0),
+              rendered: st.rendered_frames ?? null,
+              total: st.total_frames ?? null,
+            });
           } else if (st.status === "PREVIEW_READY") {
-            if (isPreviewRendering || session.status === "RENDERING_PREVIEW") {
+            if (isPreviewRendering || session.status === "RENDERING_PREVIEW" || isAutopilotWorking || session.status === "AGENT_WORKING") {
               setIsPreviewRendering(false);
+              setIsAutopilotWorking(false);
               setPreviewProgress({ percent: 100, rendered: null, total: null });
               setPreviewVersionKey(Date.now());
               if (videoRef.current) {
                 videoRef.current.load();
               }
               refreshVersions();
+              refreshMessages();
             }
           } else if (st.status === "RENDERING_FINAL") {
             const frameInfo =
@@ -358,12 +367,9 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       setIsRestoring(true);
       setGlobalError(null);
       await restoreEditorialVersion(session.id, versionNum);
-      setSession((prev) => (prev ? { ...prev, current_version: versionNum, status: "PREVIEW_READY" } : null));
+      setSession((prev) => (prev ? { ...prev, current_version: versionNum, status: "RENDERING_PREVIEW" } : null));
+      setIsPreviewRendering(true);
       await refreshVersions();
-      setPreviewVersionKey(Date.now());
-      if (videoRef.current) {
-        videoRef.current.load();
-      }
     } catch (err: any) {
       setGlobalError(err.message || `Gagal me-restore versi ${versionNum}.`);
     } finally {
@@ -415,19 +421,11 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       setIsAutopilotWorking(true);
       setGlobalError(null);
       await runEditorialAutopilot(session.id);
-      await Promise.all([
-        refreshVersions(),
-        refreshMessages(),
-      ]);
-      setSession((prev) => (prev ? { ...prev, status: "PREVIEW_READY" } : null));
-      setPreviewVersionKey(Date.now());
-      if (videoRef.current) {
-        videoRef.current.load();
-      }
+      setSession((prev) => (prev ? { ...prev, status: "AGENT_WORKING" } : null));
+      await refreshMessages();
     } catch (err: any) {
-      setGlobalError(err.message || "Gagal menjalankan autopilot editorial.");
-    } finally {
       setIsAutopilotWorking(false);
+      setGlobalError(err.message || "Gagal menjalankan autopilot editorial.");
     }
   };
 
@@ -452,14 +450,12 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       setCodeError(null);
       await updateEditorialCode(session.id, codeContent);
       setIsCodeModalOpen(false);
+      setSession((prev) => (prev ? { ...prev, status: "RENDERING_PREVIEW" } : null));
+      setIsPreviewRendering(true);
       await Promise.all([
         refreshVersions(),
         refreshMessages(),
       ]);
-      setPreviewVersionKey(Date.now());
-      if (videoRef.current) {
-        videoRef.current.load();
-      }
     } catch (err: any) {
       setCodeError(err.message || "Gagal menyimpan perubahan kode.");
     } finally {
@@ -481,11 +477,9 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       setGlobalError(null);
       await applyStylePack(session.id, packName);
       setSelectedStylePack(packName);
+      setSession((prev) => (prev ? { ...prev, status: "RENDERING_PREVIEW" } : null));
+      setIsPreviewRendering(true);
       await Promise.all([refreshVersions(), refreshMessages()]);
-      setPreviewVersionKey(Date.now());
-      if (videoRef.current) {
-        videoRef.current.load();
-      }
     } catch (err: any) {
       setGlobalError(err.message || "Gagal menerapkan style pack.");
     } finally {
@@ -526,11 +520,9 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
       setGlobalError(null);
       const res = await submitEditorialScript(session.id, scriptText, scriptMode);
       setBeatSheetResult(res.beat_sheet);
+      setSession((prev) => (prev ? { ...prev, status: "RENDERING_PREVIEW" } : null));
+      setIsPreviewRendering(true);
       await Promise.all([refreshVersions(), refreshMessages()]);
-      setPreviewVersionKey(Date.now());
-      if (videoRef.current) {
-        videoRef.current.load();
-      }
     } catch (err: any) {
       setGlobalError(err.message || "Gagal menyelaraskan naskah script.");
     } finally {

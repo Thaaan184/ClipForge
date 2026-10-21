@@ -159,7 +159,7 @@ class AgentToolContext:
     async def render_preview(self) -> dict[str, Any]:
         """Render low-resolution preview video (540x960 30fps)."""
         out_path = self.workspace_dir / "preview.mp4"
-        return await worker_client.render_preview(self.workspace_dir, out_path, concurrency=4)
+        return await worker_client.render_preview(self.workspace_dir, out_path, concurrency=2)
 
 
 AGENT_TOOLS_SCHEMA = [
