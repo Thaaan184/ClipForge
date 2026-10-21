@@ -84,6 +84,11 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
   // Action states
   const [isPreviewRendering, setIsPreviewRendering] = useState(false);
+  const [previewProgress, setPreviewProgress] = useState<{ percent: number; rendered: number | null; total: number | null }>({
+    percent: 0,
+    rendered: null,
+    total: null,
+  });
   const [isFinalRendering, setIsFinalRendering] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
@@ -181,9 +186,16 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           const st: EditorialStatus = await getEditorialStatus(session.id);
           setSession((prev) => (prev ? { ...prev, status: st.status as any, current_version: st.current_version } : null));
 
-          if (st.status === "PREVIEW_READY") {
+          if (st.status === "RENDERING_PREVIEW") {
+            setPreviewProgress({
+              percent: Math.round(st.progress_percent ?? 0),
+              rendered: st.rendered_frames ?? null,
+              total: st.total_frames ?? null,
+            });
+          } else if (st.status === "PREVIEW_READY") {
             if (isPreviewRendering || session.status === "RENDERING_PREVIEW") {
               setIsPreviewRendering(false);
+              setPreviewProgress({ percent: 100, rendered: null, total: null });
               setPreviewVersionKey(Date.now());
               if (videoRef.current) {
                 videoRef.current.load();
@@ -191,13 +203,23 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
               refreshVersions();
             }
           } else if (st.status === "RENDERING_FINAL") {
-            setFinalRenderModal((prev) => ({
-              ...prev,
-              isOpen: true,
-              status: "rendering",
-              progress: Math.min(Math.max(prev.progress + 4, 30), 75),
-              message: "Merender grafis video final 1080x1920 (30fps)...",
-            }));
+            const frameInfo =
+              st.rendered_frames != null && st.total_frames != null
+                ? ` (${st.rendered_frames}/${st.total_frames} frame)`
+                : "";
+            setFinalRenderModal((prev) => {
+              const remotionPct =
+                st.progress_percent != null
+                  ? Math.min(Math.round(st.progress_percent * 0.75), 75)
+                  : Math.min(Math.max(prev.progress + 4, 30), 75);
+              return {
+                ...prev,
+                isOpen: true,
+                status: "rendering",
+                progress: remotionPct,
+                message: `Merender grafis video final 1080x1920 (30fps)${frameInfo}...`,
+              };
+            });
           } else if (st.status === "AUDIO_NORMALIZING") {
             setFinalRenderModal((prev) => ({
               ...prev,
@@ -815,12 +837,22 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
                 <RefreshCw className="w-8 h-8 text-action animate-spin" />
                 <div>
                   <span className="text-xs font-mono font-bold text-copy uppercase tracking-wider block">
-                    Sedang Merender Pratinjau Remotion
+                    Sedang Merender Pratinjau Remotion {previewProgress.percent > 0 ? `(${previewProgress.percent}%)` : ""}
                   </span>
                   <span className="text-[10px] font-mono text-muted block mt-1">
-                    Merender frame & efek grafis di latar belakang...
+                    {previewProgress.rendered != null && previewProgress.total != null
+                      ? `Frame ${previewProgress.rendered} dari ${previewProgress.total} (30fps)`
+                      : "Merender frame & efek grafis di latar belakang..."}
                   </span>
                 </div>
+                {previewProgress.percent > 0 && (
+                  <div className="w-48 bg-surface border border-line h-1.5 mt-1 overflow-hidden">
+                    <div
+                      className="bg-action h-full transition-all duration-300"
+                      style={{ width: `${previewProgress.percent}%` }}
+                    />
+                  </div>
+                )}
               </div>
             )}
 

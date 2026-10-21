@@ -357,5 +357,8 @@ export interface EditorialStatus {
   error_message?: string | null;
   failed_stage?: string | null;
   is_rendering: boolean;
+  progress_percent?: number | null;
+  rendered_frames?: number | null;
+  total_frames?: number | null;
 }
 

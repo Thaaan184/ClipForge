@@ -388,7 +388,7 @@ async def _execute_preview_render(session_id: str) -> dict[str, Any]:
             res = await worker_client.render_preview(
                 workspace_dir=ws_dir,
                 output_path=out_preview,
-                concurrency=4,
+                concurrency=2,
             )
             if not res.get("success"):
                 err = f"Worker preview render failed: {res.get('error')}"
@@ -485,6 +485,11 @@ async def _execute_final_render(session_id: str) -> dict[str, Any]:
                     return {"success": False, "error": err_msg}
 
                 # Step 3: Audio Normalization (EBU R128 Loudnorm -c:v copy)
+                prog_file = ws_dir / "render_progress.json"
+                try:
+                    prog_file.write_text(json.dumps({"stage": "audio_normalizing", "percent": 85, "updatedAt": int(datetime.now().timestamp() * 1000)}), encoding="utf-8")
+                except Exception:
+                    pass
                 await db.execute(
                     "UPDATE editorial_sessions SET status = 'AUDIO_NORMALIZING', updated_at = ? WHERE id = ?",
                     (datetime.now(UTC).isoformat(), session_id),
@@ -509,6 +514,10 @@ async def _execute_final_render(session_id: str) -> dict[str, Any]:
                     return {"success": False, "error": err}
 
                 # Step 4: Strict QA
+                try:
+                    prog_file.write_text(json.dumps({"stage": "qa", "percent": 95, "updatedAt": int(datetime.now().timestamp() * 1000)}), encoding="utf-8")
+                except Exception:
+                    pass
                 await db.execute(
                     "UPDATE editorial_sessions SET status = 'QA', updated_at = ? WHERE id = ?",
                     (datetime.now(UTC).isoformat(), session_id),
@@ -526,6 +535,10 @@ async def _execute_final_render(session_id: str) -> dict[str, Any]:
                     return {"success": False, "error": f"QA check failed: {err_str}"}
 
                 # Step 5: Mark DONE and commit version
+                try:
+                    prog_file.write_text(json.dumps({"stage": "done", "percent": 100, "updatedAt": int(datetime.now().timestamp() * 1000)}), encoding="utf-8")
+                except Exception:
+                    pass
                 commit_sha = commit_workspace_version(ws_dir, summary="Final editorial render completed")
                 finish_iso = datetime.now(UTC).isoformat()
 
@@ -832,6 +845,23 @@ async def get_editorial_status(
     status = row[1]
     is_rendering = status in ("RENDERING_PREVIEW", "RENDERING_FINAL", "AUDIO_NORMALIZING", "QA", "AGENT_WORKING")
 
+    progress_percent = None
+    rendered_frames = None
+    total_frames = None
+
+    ws_dir = get_workspace_dir(session_id)
+    prog_file = ws_dir / "render_progress.json"
+    if prog_file.exists():
+        try:
+            pdata = json.loads(prog_file.read_text(encoding="utf-8"))
+            progress_percent = float(pdata.get("percent", 0.0))
+            if pdata.get("renderedFrames") is not None:
+                rendered_frames = int(pdata.get("renderedFrames"))
+            if pdata.get("totalFrames") is not None:
+                total_frames = int(pdata.get("totalFrames"))
+        except Exception:
+            pass
+
     return EditorialStatusResponse(
         session_id=row[0],
         status=status,
@@ -839,6 +869,9 @@ async def get_editorial_status(
         error_message=row[3],
         failed_stage=row[4],
         is_rendering=is_rendering,
+        progress_percent=progress_percent,
+        rendered_frames=rendered_frames,
+        total_frames=total_frames,
     )
 
 

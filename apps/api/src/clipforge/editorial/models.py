@@ -152,6 +152,9 @@ class EditorialStatusResponse(BaseModel):
     error_message: str | None = None
     failed_stage: str | None = None
     is_rendering: bool = False
+    progress_percent: float | None = None
+    rendered_frames: int | None = None
+    total_frames: int | None = None
 
 
 class EditorialMessageResponse(BaseModel):

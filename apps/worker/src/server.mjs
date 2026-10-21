@@ -209,6 +209,23 @@ const server = http.createServer(async (req, res) => {
       const serveUrl = await bundle({ entryPoint, publicDir });
       const comp = await selectComposition({ serveUrl, id: composition_id });
 
+      const progressFile = path.join(workspace_dir, "render_progress.json");
+      const writeProgress = (rendered, total, stage = "preview") => {
+        try {
+          const pct = total > 0 ? Math.min(Math.round((rendered / total) * 100), 100) : 0;
+          fs.writeFileSync(progressFile, JSON.stringify({
+            stage,
+            renderedFrames: rendered,
+            totalFrames: total,
+            percent: pct,
+            fps: comp.fps || 30,
+            updatedAt: Date.now(),
+          }));
+        } catch (_) {}
+      };
+
+      writeProgress(0, comp.durationInFrames || 1, "preview");
+
       await renderMedia({
         composition: comp,
         serveUrl,
@@ -216,9 +233,14 @@ const server = http.createServer(async (req, res) => {
         outputLocation: output_path,
         scale: 0.5, // 540x960 fast preview
         crf: 28,
-        concurrency: Math.min(concurrency, 8),
+        concurrency: Math.min(concurrency || 2, 2),
         pixelFormat: "yuv420p",
+        onProgress: ({ renderedFrames }) => {
+          writeProgress(renderedFrames, comp.durationInFrames || 1, "preview");
+        },
       });
+
+      writeProgress(comp.durationInFrames || 1, comp.durationInFrames || 1, "preview");
 
       const elapsed = (Date.now() - startTime) / 1000;
       return sendJson(res, 200, {
@@ -256,6 +278,23 @@ const server = http.createServer(async (req, res) => {
       const serveUrl = await bundle({ entryPoint, publicDir });
       const comp = await selectComposition({ serveUrl, id: composition_id });
 
+      const progressFile = path.join(workspace_dir, "render_progress.json");
+      const writeProgress = (rendered, total, stage = "final") => {
+        try {
+          const pct = total > 0 ? Math.min(Math.round((rendered / total) * 100), 100) : 0;
+          fs.writeFileSync(progressFile, JSON.stringify({
+            stage,
+            renderedFrames: rendered,
+            totalFrames: total,
+            percent: pct,
+            fps: comp.fps || 30,
+            updatedAt: Date.now(),
+          }));
+        } catch (_) {}
+      };
+
+      writeProgress(0, comp.durationInFrames || 1, "final");
+
       await renderMedia({
         composition: comp,
         serveUrl,
@@ -263,9 +302,14 @@ const server = http.createServer(async (req, res) => {
         outputLocation: output_path,
         scale: 1.0, // Full 1080x1920
         crf: 18,
-        concurrency: Math.min(concurrency, 8),
+        concurrency: Math.min(concurrency || 4, 4),
         pixelFormat: "yuv420p",
+        onProgress: ({ renderedFrames }) => {
+          writeProgress(renderedFrames, comp.durationInFrames || 1, "final");
+        },
       });
+
+      writeProgress(comp.durationInFrames || 1, comp.durationInFrames || 1, "final");
 
       const elapsed = (Date.now() - startTime) / 1000;
       return sendJson(res, 200, {
