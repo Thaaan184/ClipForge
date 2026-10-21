@@ -303,6 +303,7 @@ export interface EditorialSession {
   status:
     | "EDITORIAL_DRAFT"
     | "AGENT_WORKING"
+    | "RENDERING_PREVIEW"
     | "PREVIEW_READY"
     | "RENDERING_FINAL"
     | "AUDIO_NORMALIZING"

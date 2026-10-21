@@ -1126,6 +1126,9 @@ async def create_editorial_source(
     )
     await db.commit()
 
+    # Sync to finished_clips
+    await sync_finished_clip(db, clip_id)
+
     return {
         "clip_id": clip_id,
         "status": "ready",

@@ -685,8 +685,8 @@ export async function restoreEditorialVersion(
   return res.json();
 }
 
-export async function renderEditorialPreview(sessionId: string): Promise<{ success: boolean; preview_path: string }> {
-  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/preview`, {
+export async function renderEditorialPreview(sessionId: string): Promise<{ success: boolean; preview_path?: string; status?: string }> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/preview?background=true`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -696,8 +696,8 @@ export async function renderEditorialPreview(sessionId: string): Promise<{ succe
   return res.json();
 }
 
-export async function renderEditorialFinal(sessionId: string): Promise<{ success: boolean; render_id: string }> {
-  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/render-final`, {
+export async function renderEditorialFinal(sessionId: string): Promise<{ success: boolean; render_id?: string; status?: string }> {
+  const res = await fetch(`${API_BASE}/api/editorial/sessions/${sessionId}/render-final?background=true`, {
     method: "POST",
   });
   if (!res.ok) {

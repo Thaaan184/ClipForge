@@ -1,5 +1,6 @@
 """REST API routes for Editorial Studio v3 (/api/editorial)."""
 
+import asyncio
 import json
 import logging
 import os
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
@@ -352,9 +353,343 @@ async def list_editorial_versions(
     ]
 
 
+async def _execute_preview_render(session_id: str) -> dict[str, Any]:
+    """Execute preview render in background worker and update database."""
+    ws_dir = get_workspace_dir(session_id)
+    from clipforge.db.connection import get_db_connection
+
+    async with get_db_connection() as db:
+        try:
+            # Security scan before compile
+            sec = audit_workspace_security(ws_dir)
+            if not sec["passed"]:
+                err = f"Security violation: {sec['errors']}"
+                now_iso = datetime.now(UTC).isoformat()
+                await db.execute(
+                    "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'SECURITY', error_message = ?, updated_at = ? WHERE id = ?",
+                    (err, now_iso, session_id),
+                )
+                await db.commit()
+                return {"success": False, "error": err}
+
+            # Typecheck
+            tc = await worker_client.typecheck(ws_dir)
+            if not tc.get("success"):
+                err = f"TypeScript typecheck failed: {tc.get('errors')}"
+                now_iso = datetime.now(UTC).isoformat()
+                await db.execute(
+                    "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'TYPECHECK', error_message = ?, updated_at = ? WHERE id = ?",
+                    (err, now_iso, session_id),
+                )
+                await db.commit()
+                return {"success": False, "error": err}
+
+            out_preview = ws_dir / "preview.mp4"
+            res = await worker_client.render_preview(
+                workspace_dir=ws_dir,
+                output_path=out_preview,
+                concurrency=4,
+            )
+            if not res.get("success"):
+                err = f"Worker preview render failed: {res.get('error')}"
+                now_iso = datetime.now(UTC).isoformat()
+                await db.execute(
+                    "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'PREVIEW', error_message = ?, updated_at = ? WHERE id = ?",
+                    (err, now_iso, session_id),
+                )
+                await db.commit()
+                return {"success": False, "error": err}
+
+            # Commit snapshot
+            commit_sha = commit_workspace_version(ws_dir, summary="Render preview update")
+
+            # Update session state to PREVIEW_READY
+            now_iso = datetime.now(UTC).isoformat()
+            await db.execute(
+                """
+                UPDATE editorial_sessions
+                SET status = 'PREVIEW_READY', error_message = NULL, failed_stage = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (now_iso, session_id),
+            )
+            # Update active version record preview path
+            await db.execute(
+                """
+                UPDATE editorial_versions
+                SET preview_path = ?, commit_sha = ?
+                WHERE session_id = ? AND version_num = (SELECT current_version FROM editorial_sessions WHERE id = ?)
+                """,
+                (str(out_preview), commit_sha, session_id, session_id),
+            )
+            await db.commit()
+
+            return {
+                "success": True,
+                "session_id": session_id,
+                "preview_path": str(out_preview),
+                "elapsed_s": res.get("elapsed_s", 0),
+            }
+        except Exception as exc:
+            logger.exception("execute_preview_render_failed", exc_info=exc)
+            err = str(exc)
+            now_iso = datetime.now(UTC).isoformat()
+            await db.execute(
+                "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'PREVIEW', error_message = ?, updated_at = ? WHERE id = ?",
+                (err, now_iso, session_id),
+            )
+            await db.commit()
+            return {"success": False, "error": err}
+
+
+async def _execute_final_render(session_id: str) -> dict[str, Any]:
+    """Execute final render pipeline with Remotion, EBU R128 loudnorm, and strict QA."""
+    ws_dir = get_workspace_dir(session_id)
+    from clipforge.db.connection import get_db_connection
+
+    async with RENDER_SEMAPHORE:
+        async with get_db_connection() as db:
+            try:
+                now_iso = datetime.now(UTC).isoformat()
+                await db.execute(
+                    "UPDATE editorial_sessions SET status = 'RENDERING_FINAL', error_message = NULL, failed_stage = NULL, updated_at = ? WHERE id = ?",
+                    (now_iso, session_id),
+                )
+                await db.commit()
+
+                # Step 1: Security Scan
+                sec = audit_workspace_security(ws_dir)
+                if not sec["passed"]:
+                    err = f"Security check failed: {sec['errors']}"
+                    await db.execute(
+                        "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'SECURITY', error_message = ?, updated_at = ? WHERE id = ?",
+                        (err, datetime.now(UTC).isoformat(), session_id),
+                    )
+                    await db.commit()
+                    return {"success": False, "error": err}
+
+                # Step 2: Remotion Raw Render
+                raw_final = ws_dir / "raw_final.mp4"
+                res = await worker_client.render_final(
+                    workspace_dir=ws_dir,
+                    output_path=raw_final,
+                    concurrency=4,
+                )
+                if not res.get("success"):
+                    err_msg = res.get("error", "Remotion render error")
+                    await db.execute(
+                        "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'RENDERING_FINAL', error_message = ?, updated_at = ? WHERE id = ?",
+                        (err_msg, datetime.now(UTC).isoformat(), session_id),
+                    )
+                    await db.commit()
+                    return {"success": False, "error": err_msg}
+
+                # Step 3: Audio Normalization (EBU R128 Loudnorm -c:v copy)
+                await db.execute(
+                    "UPDATE editorial_sessions SET status = 'AUDIO_NORMALIZING', updated_at = ? WHERE id = ?",
+                    (datetime.now(UTC).isoformat(), session_id),
+                )
+                await db.commit()
+
+                final_out = ws_dir / "final_editorial.mp4"
+                norm_ok = normalize_editorial_audio(
+                    input_video=raw_final,
+                    output_video=final_out,
+                    target_i=-16.0,
+                    target_tp=-1.5,
+                    target_lra=11.0,
+                )
+                if not norm_ok:
+                    err = "FFmpeg loudnorm failed"
+                    await db.execute(
+                        "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'AUDIO_NORMALIZING', error_message = ?, updated_at = ? WHERE id = ?",
+                        (err, datetime.now(UTC).isoformat(), session_id),
+                    )
+                    await db.commit()
+                    return {"success": False, "error": err}
+
+                # Step 4: Strict QA
+                await db.execute(
+                    "UPDATE editorial_sessions SET status = 'QA', updated_at = ? WHERE id = ?",
+                    (datetime.now(UTC).isoformat(), session_id),
+                )
+                await db.commit()
+
+                qa_res = run_editorial_final_qa(final_out)
+                if not qa_res["passed"]:
+                    err_str = "; ".join(qa_res.get("errors", ["QA validation failed"]))
+                    await db.execute(
+                        "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'QA', error_message = ?, updated_at = ? WHERE id = ?",
+                        (err_str, datetime.now(UTC).isoformat(), session_id),
+                    )
+                    await db.commit()
+                    return {"success": False, "error": f"QA check failed: {err_str}"}
+
+                # Step 5: Mark DONE and commit version
+                commit_sha = commit_workspace_version(ws_dir, summary="Final editorial render completed")
+                finish_iso = datetime.now(UTC).isoformat()
+
+                # Link/copy to final.mp4 so both file names resolve
+                final_mp4 = ws_dir / "final.mp4"
+                if final_out.exists() and not final_mp4.exists():
+                    try:
+                        os.link(final_out, final_mp4)
+                    except Exception:
+                        shutil.copy2(final_out, final_mp4)
+
+                # Sync with clip and global finished_clips catalog
+                async with db.execute("SELECT clip_id FROM editorial_sessions WHERE id = ?", (session_id,)) as cur:
+                    s_row = await cur.fetchone()
+                    clip_id = s_row[0] if s_row else None
+
+                if clip_id:
+                    async with db.execute(
+                        "SELECT job_id, duration_s, thumb_path, srt_path FROM clips WHERE id = ?",
+                        (clip_id,),
+                    ) as cur:
+                        c_row = await cur.fetchone()
+                        job_id = c_row[0] if c_row else None
+                        duration_s = c_row[1] if c_row else 40.0
+                        thumb_path = c_row[2] if c_row else None
+                        srt_path = c_row[3] if c_row else None
+
+                    project_title = "ClipForge Proyek"
+                    if job_id:
+                        async with db.execute("SELECT title FROM jobs WHERE id = ?", (job_id,)) as cur:
+                            j_row = await cur.fetchone()
+                            if j_row and j_row[0]:
+                                project_title = j_row[0]
+
+                    # Generate thumbnail if not existing
+                    if not thumb_path or not Path(thumb_path).exists():
+                        thumb_file = ws_dir / "thumb.jpg"
+                        if not thumb_file.exists():
+                            try:
+                                subprocess.run(
+                                    ["ffmpeg", "-y", "-ss", "00:00:01.000", "-i", str(final_out), "-vframes", "1", "-q:v", "2", str(thumb_file)],
+                                    check=True,
+                                    capture_output=True,
+                                )
+                            except Exception as exc:
+                                logger.warning("failed_to_extract_thumb: %s", exc)
+                        if thumb_file.exists():
+                            thumb_path = str(thumb_file)
+
+                    # Mirror back to clip directory so all other views see the final editorial video
+                    if job_id:
+                        clip_dir = settings.data_dir / "jobs" / job_id / "clips" / clip_id
+                        if clip_dir.exists():
+                            clip_final = clip_dir / "final.mp4"
+                            clip_ed = clip_dir / "editorial_source.mp4"
+                            try:
+                                if clip_final.exists():
+                                    clip_final.unlink()
+                                os.link(final_out, clip_final)
+                            except Exception:
+                                try:
+                                    shutil.copy2(final_out, clip_final)
+                                except Exception:
+                                    pass
+                            try:
+                                if clip_ed.exists():
+                                    clip_ed.unlink()
+                                os.link(final_out, clip_ed)
+                            except Exception:
+                                try:
+                                    shutil.copy2(final_out, clip_ed)
+                                except Exception:
+                                    pass
+
+                    # Update clips table
+                    await db.execute(
+                        """
+                        UPDATE clips
+                        SET video_path = ?, thumb_path = ?, status = 'done'
+                        WHERE id = ?
+                        """,
+                        (str(final_out), thumb_path, clip_id),
+                    )
+
+                    # Mirror to permanent finished_clips folder
+                    perm_dir = settings.data_dir / "finished_clips" / clip_id
+                    perm_dir.mkdir(parents=True, exist_ok=True)
+                    perm_video = perm_dir / f"{clip_id}.mp4"
+                    try:
+                        if perm_video.exists():
+                            perm_video.unlink()
+                        os.link(final_out, perm_video)
+                    except Exception:
+                        try:
+                            shutil.copy2(final_out, perm_video)
+                        except Exception:
+                            pass
+
+                    target_video_path = str(perm_video) if perm_video.exists() else str(final_out)
+
+                    # Upsert into global finished_clips table
+                    async with db.execute("SELECT id FROM finished_clips WHERE clip_id = ?", (clip_id,)) as cur:
+                        fc_row = await cur.fetchone()
+                        if fc_row:
+                            await db.execute(
+                                """
+                                UPDATE finished_clips
+                                SET video_path = ?, thumb_path = COALESCE(?, thumb_path), duration_s = COALESCE(?, duration_s), updated_at = ?
+                                WHERE clip_id = ?
+                                """,
+                                (target_video_path, thumb_path, duration_s, finish_iso, clip_id),
+                            )
+                        else:
+                            fc_id = f"fc_{clip_id.replace('-', '')[:10]}"
+                            await db.execute(
+                                """
+                                INSERT INTO finished_clips (
+                                    id, clip_id, job_id, project_title, video_path, thumb_path, srt_path,
+                                    duration_s, width, height, subtitles_json, created_at, updated_at
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1080, 1920, '[]', ?, ?)
+                                """,
+                                (fc_id, clip_id, job_id, project_title, target_video_path, thumb_path, srt_path, duration_s or 40.0, finish_iso, finish_iso),
+                            )
+
+                await db.execute(
+                    """
+                    UPDATE editorial_sessions
+                    SET status = 'DONE', error_message = NULL, failed_stage = NULL, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (finish_iso, session_id),
+                )
+                await db.execute(
+                    """
+                    UPDATE editorial_versions
+                    SET final_path = ?, qa_json = ?, commit_sha = ?
+                    WHERE session_id = ? AND version_num = (SELECT current_version FROM editorial_sessions WHERE id = ?)
+                    """,
+                    (str(final_out), json.dumps(qa_res), commit_sha, session_id, session_id),
+                )
+                await db.commit()
+
+                return {
+                    "success": True,
+                    "session_id": session_id,
+                    "final_path": str(final_out),
+                    "qa": qa_res,
+                }
+            except Exception as exc:
+                logger.exception("execute_final_render_failed", exc_info=exc)
+                err = str(exc)
+                await db.execute(
+                    "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'RENDER_FINAL', error_message = ?, updated_at = ? WHERE id = ?",
+                    (err, datetime.now(UTC).isoformat(), session_id),
+                )
+                await db.commit()
+                return {"success": False, "error": err}
+
+
 @router.post("/sessions/{session_id}/preview")
 async def trigger_preview_render(
     session_id: str,
+    background: bool = Query(False),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """Render fast low-res MP4 preview using Remotion worker."""
@@ -362,60 +697,36 @@ async def trigger_preview_render(
     if not ws_dir.exists():
         raise HTTPException(status_code=404, detail="Workspace directory not found")
 
-    # Security scan before compile
-    sec = audit_workspace_security(ws_dir)
-    if not sec["passed"]:
-        raise HTTPException(status_code=400, detail=f"Security violation: {sec['errors']}")
-
-    # Typecheck
-    tc = await worker_client.typecheck(ws_dir)
-    if not tc.get("success"):
-        raise HTTPException(status_code=400, detail=f"TypeScript typecheck failed: {tc.get('errors')}")
-
-    out_preview = ws_dir / "preview.mp4"
-    res = await worker_client.render_preview(
-        workspace_dir=ws_dir,
-        output_path=out_preview,
-        concurrency=2,
-    )
-    if not res.get("success"):
-        raise HTTPException(status_code=500, detail=f"Worker preview render failed: {res.get('error')}")
-
-    # Commit snapshot
-    commit_sha = commit_workspace_version(ws_dir, summary="Render preview update")
-
-    # Update session state to PREVIEW_READY
     now_iso = datetime.now(UTC).isoformat()
     await db.execute(
         """
         UPDATE editorial_sessions
-        SET status = 'PREVIEW_READY', updated_at = ?
+        SET status = 'RENDERING_PREVIEW', error_message = NULL, failed_stage = NULL, updated_at = ?
         WHERE id = ?
         """,
         (now_iso, session_id),
     )
-    # Update active version record preview path
-    await db.execute(
-        """
-        UPDATE editorial_versions
-        SET preview_path = ?, commit_sha = ?
-        WHERE session_id = ? AND version_num = (SELECT current_version FROM editorial_sessions WHERE id = ?)
-        """,
-        (str(out_preview), commit_sha, session_id, session_id),
-    )
     await db.commit()
 
-    return {
-        "success": True,
-        "session_id": session_id,
-        "preview_path": str(out_preview),
-        "elapsed_s": res.get("elapsed_s", 0),
-    }
+    if background:
+        asyncio.create_task(_execute_preview_render(session_id))
+        return {
+            "success": True,
+            "session_id": session_id,
+            "status": "RENDERING_PREVIEW",
+            "message": "Preview render started in background",
+        }
+
+    res = await _execute_preview_render(session_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "Preview render failed"))
+    return res
 
 
 @router.post("/sessions/{session_id}/render-final")
 async def trigger_final_render(
     session_id: str,
+    background: bool = Query(False),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """Render full resolution 1080x1920 video, normalize audio EBU R128, and run strict QA."""
@@ -423,231 +734,30 @@ async def trigger_final_render(
     if not ws_dir.exists():
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    # Acquire semaphore to guarantee serial rendering
-    async with RENDER_SEMAPHORE:
-        now_iso = datetime.now(UTC).isoformat()
-        await db.execute(
-            "UPDATE editorial_sessions SET status = 'RENDERING_FINAL', updated_at = ? WHERE id = ?",
-            (now_iso, session_id),
-        )
-        await db.commit()
+    now_iso = datetime.now(UTC).isoformat()
+    await db.execute(
+        """
+        UPDATE editorial_sessions
+        SET status = 'RENDERING_FINAL', error_message = NULL, failed_stage = NULL, updated_at = ?
+        WHERE id = ?
+        """,
+        (now_iso, session_id),
+    )
+    await db.commit()
 
-        # Step 1: Security Scan
-        sec = audit_workspace_security(ws_dir)
-        if not sec["passed"]:
-            await db.execute(
-                "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'SECURITY', error_message = ? WHERE id = ?",
-                (str(sec["errors"]), session_id),
-            )
-            await db.commit()
-            raise HTTPException(status_code=400, detail=f"Security check failed: {sec['errors']}")
-
-        # Step 2: Remotion Raw Render
-        raw_final = ws_dir / "raw_final.mp4"
-        res = await worker_client.render_final(
-            workspace_dir=ws_dir,
-            output_path=raw_final,
-            concurrency=2,
-        )
-        if not res.get("success"):
-            err_msg = res.get("error", "Remotion render error")
-            await db.execute(
-                "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'RENDERING_FINAL', error_message = ? WHERE id = ?",
-                (err_msg, session_id),
-            )
-            await db.commit()
-            raise HTTPException(status_code=500, detail=f"Render final failed: {err_msg}")
-
-        # Step 3: Audio Normalization (EBU R128 Loudnorm -c:v copy)
-        await db.execute(
-            "UPDATE editorial_sessions SET status = 'AUDIO_NORMALIZING', updated_at = ? WHERE id = ?",
-            (datetime.now(UTC).isoformat(), session_id),
-        )
-        await db.commit()
-
-        final_out = ws_dir / "final_editorial.mp4"
-        norm_ok = normalize_editorial_audio(
-            input_video=raw_final,
-            output_video=final_out,
-            target_i=-16.0,
-            target_tp=-1.5,
-            target_lra=11.0,
-        )
-        if not norm_ok:
-            await db.execute(
-                "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'AUDIO_NORMALIZING', error_message = 'FFmpeg loudnorm failed' WHERE id = ?",
-                (session_id,),
-            )
-            await db.commit()
-            raise HTTPException(status_code=500, detail="Audio normalization failed")
-
-        # Step 4: Strict QA
-        await db.execute(
-            "UPDATE editorial_sessions SET status = 'QA', updated_at = ? WHERE id = ?",
-            (datetime.now(UTC).isoformat(), session_id),
-        )
-        await db.commit()
-
-        qa_res = run_editorial_final_qa(final_out)
-        if not qa_res["passed"]:
-            err_str = "; ".join(qa_res.get("errors", ["QA validation failed"]))
-            await db.execute(
-                "UPDATE editorial_sessions SET status = 'FAILED', failed_stage = 'QA', error_message = ? WHERE id = ?",
-                (err_str, session_id),
-            )
-            await db.commit()
-            raise HTTPException(status_code=500, detail=f"QA check failed: {err_str}")
-
-        # Step 5: Mark DONE and commit version
-        commit_sha = commit_workspace_version(ws_dir, summary="Final editorial render completed")
-        finish_iso = datetime.now(UTC).isoformat()
-
-        # Link/copy to final.mp4 so both file names resolve
-        final_mp4 = ws_dir / "final.mp4"
-        if final_out.exists() and not final_mp4.exists():
-            try:
-                os.link(final_out, final_mp4)
-            except Exception:
-                shutil.copy2(final_out, final_mp4)
-
-        # Sync with clip and global finished_clips catalog
-        async with db.execute("SELECT clip_id FROM editorial_sessions WHERE id = ?", (session_id,)) as cur:
-            s_row = await cur.fetchone()
-            clip_id = s_row[0] if s_row else None
-
-        if clip_id:
-            async with db.execute(
-                "SELECT job_id, duration_s, thumb_path, srt_path FROM clips WHERE id = ?",
-                (clip_id,),
-            ) as cur:
-                c_row = await cur.fetchone()
-                job_id = c_row[0] if c_row else None
-                duration_s = c_row[1] if c_row else 40.0
-                thumb_path = c_row[2] if c_row else None
-                srt_path = c_row[3] if c_row else None
-
-            project_title = "ClipForge Proyek"
-            if job_id:
-                async with db.execute("SELECT title FROM jobs WHERE id = ?", (job_id,)) as cur:
-                    j_row = await cur.fetchone()
-                    if j_row and j_row[0]:
-                        project_title = j_row[0]
-
-            # Generate thumbnail if not existing
-            if not thumb_path or not Path(thumb_path).exists():
-                thumb_file = ws_dir / "thumb.jpg"
-                if not thumb_file.exists():
-                    try:
-                        subprocess.run(
-                            ["ffmpeg", "-y", "-ss", "00:00:01.000", "-i", str(final_out), "-vframes", "1", "-q:v", "2", str(thumb_file)],
-                            check=True,
-                            capture_output=True,
-                        )
-                    except Exception as exc:
-                        logger.warning("failed_to_extract_thumb: %s", exc)
-                if thumb_file.exists():
-                    thumb_path = str(thumb_file)
-
-            # Mirror back to clip directory so all other views see the final editorial video
-            if job_id:
-                clip_dir = settings.data_dir / "jobs" / job_id / "clips" / clip_id
-                if clip_dir.exists():
-                    clip_final = clip_dir / "final.mp4"
-                    clip_ed = clip_dir / "editorial_source.mp4"
-                    try:
-                        if clip_final.exists():
-                            clip_final.unlink()
-                        os.link(final_out, clip_final)
-                    except Exception:
-                        try:
-                            shutil.copy2(final_out, clip_final)
-                        except Exception:
-                            pass
-                    try:
-                        if clip_ed.exists():
-                            clip_ed.unlink()
-                        os.link(final_out, clip_ed)
-                    except Exception:
-                        try:
-                            shutil.copy2(final_out, clip_ed)
-                        except Exception:
-                            pass
-
-            # Update clips table
-            await db.execute(
-                """
-                UPDATE clips
-                SET video_path = ?, thumb_path = ?, status = 'done'
-                WHERE id = ?
-                """,
-                (str(final_out), thumb_path, clip_id),
-            )
-
-            # Mirror to permanent finished_clips folder
-            perm_dir = settings.data_dir / "finished_clips" / clip_id
-            perm_dir.mkdir(parents=True, exist_ok=True)
-            perm_video = perm_dir / f"{clip_id}.mp4"
-            try:
-                if perm_video.exists():
-                    perm_video.unlink()
-                os.link(final_out, perm_video)
-            except Exception:
-                try:
-                    shutil.copy2(final_out, perm_video)
-                except Exception:
-                    pass
-
-            target_video_path = str(perm_video) if perm_video.exists() else str(final_out)
-
-            # Upsert into global finished_clips table
-            async with db.execute("SELECT id FROM finished_clips WHERE clip_id = ?", (clip_id,)) as cur:
-                fc_row = await cur.fetchone()
-                if fc_row:
-                    await db.execute(
-                        """
-                        UPDATE finished_clips
-                        SET video_path = ?, thumb_path = COALESCE(?, thumb_path), duration_s = COALESCE(?, duration_s), updated_at = ?
-                        WHERE clip_id = ?
-                        """,
-                        (target_video_path, thumb_path, duration_s, finish_iso, clip_id),
-                    )
-                else:
-                    fc_id = f"fc_{clip_id.replace('-', '')[:10]}"
-                    await db.execute(
-                        """
-                        INSERT INTO finished_clips (
-                            id, clip_id, job_id, project_title, video_path, thumb_path, srt_path,
-                            duration_s, width, height, subtitles_json, created_at, updated_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1080, 1920, '[]', ?, ?)
-                        """,
-                        (fc_id, clip_id, job_id, project_title, target_video_path, thumb_path, srt_path, duration_s or 40.0, finish_iso, finish_iso),
-                    )
-
-        await db.execute(
-            """
-            UPDATE editorial_sessions
-            SET status = 'DONE', error_message = NULL, failed_stage = NULL, updated_at = ?
-            WHERE id = ?
-            """,
-            (finish_iso, session_id),
-        )
-        await db.execute(
-            """
-            UPDATE editorial_versions
-            SET final_path = ?, qa_json = ?, commit_sha = ?
-            WHERE session_id = ? AND version_num = (SELECT current_version FROM editorial_sessions WHERE id = ?)
-            """,
-            (str(final_out), json.dumps(qa_res), commit_sha, session_id, session_id),
-        )
-        await db.commit()
-
+    if background:
+        asyncio.create_task(_execute_final_render(session_id))
         return {
             "success": True,
             "session_id": session_id,
-            "final_path": str(final_out),
-            "qa": qa_res,
+            "status": "RENDERING_FINAL",
+            "message": "Final render started in background",
         }
+
+    res = await _execute_final_render(session_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "Final render failed"))
+    return res
 
 
 @router.get("/sessions/{session_id}/preview.mp4")
@@ -720,7 +830,7 @@ async def get_editorial_status(
             raise HTTPException(status_code=404, detail="Sesi editorial tidak ditemukan")
 
     status = row[1]
-    is_rendering = status in ("RENDERING_FINAL", "AUDIO_NORMALIZING", "QA", "AGENT_WORKING")
+    is_rendering = status in ("RENDERING_PREVIEW", "RENDERING_FINAL", "AUDIO_NORMALIZING", "QA", "AGENT_WORKING")
 
     return EditorialStatusResponse(
         session_id=row[0],

@@ -76,7 +76,7 @@ class RemotionWorkerClient:
         workspace_dir: Path,
         output_path: Path,
         composition_id: str = "Main",
-        concurrency: int = 2,
+        concurrency: int = 4,
     ) -> dict[str, Any]:
         """Render fast low-resolution MP4 preview."""
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -97,7 +97,7 @@ class RemotionWorkerClient:
         workspace_dir: Path,
         output_path: Path,
         composition_id: str = "Main",
-        concurrency: int = 2,
+        concurrency: int = 4,
     ) -> dict[str, Any]:
         """Render full-resolution 1080x1920 30fps raw video."""
         async with httpx.AsyncClient(timeout=self.timeout) as client:

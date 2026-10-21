@@ -168,10 +168,12 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
     let pollInterval: any = null;
     const isWorking =
+      session.status === "RENDERING_PREVIEW" ||
       session.status === "RENDERING_FINAL" ||
       session.status === "AUDIO_NORMALIZING" ||
       session.status === "QA" ||
-      session.status === "AGENT_WORKING";
+      session.status === "AGENT_WORKING" ||
+      isPreviewRendering;
 
     if (isWorking) {
       pollInterval = setInterval(async () => {
@@ -179,7 +181,16 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
           const st: EditorialStatus = await getEditorialStatus(session.id);
           setSession((prev) => (prev ? { ...prev, status: st.status as any, current_version: st.current_version } : null));
 
-          if (st.status === "RENDERING_FINAL") {
+          if (st.status === "PREVIEW_READY") {
+            if (isPreviewRendering || session.status === "RENDERING_PREVIEW") {
+              setIsPreviewRendering(false);
+              setPreviewVersionKey(Date.now());
+              if (videoRef.current) {
+                videoRef.current.load();
+              }
+              refreshVersions();
+            }
+          } else if (st.status === "RENDERING_FINAL") {
             setFinalRenderModal((prev) => ({
               ...prev,
               isOpen: true,
@@ -214,8 +225,10 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
             });
             clearInterval(pollInterval);
           } else if (st.status === "FAILED") {
+            setIsPreviewRendering(false);
             setIsFinalRendering(false);
             setIsAutopilotWorking(false);
+            setGlobalError(st.error_message || "Proses render terhenti");
             setFinalRenderModal({
               isOpen: true,
               status: "error",
@@ -272,15 +285,20 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
     try {
       setIsPreviewRendering(true);
       setGlobalError(null);
-      await renderEditorialPreview(session.id);
-      setPreviewVersionKey(Date.now());
-      if (videoRef.current) {
-        videoRef.current.load();
+      const res = await renderEditorialPreview(session.id);
+      if (res.status === "PREVIEW_READY") {
+        setSession((prev) => (prev ? { ...prev, status: "PREVIEW_READY" } : null));
+        setPreviewVersionKey(Date.now());
+        if (videoRef.current) {
+          videoRef.current.load();
+        }
+        setIsPreviewRendering(false);
+      } else {
+        setSession((prev) => (prev ? { ...prev, status: "RENDERING_PREVIEW" } : null));
       }
     } catch (err: any) {
-      setGlobalError(err.message || "Gagal merender video pratinjau editorial.");
-    } finally {
       setIsPreviewRendering(false);
+      setGlobalError(err.message || "Gagal memulai render video pratinjau editorial.");
     }
   };
 
@@ -528,6 +546,7 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
   const previewUrl = session ? `${getEditorialPreviewVideoUrl(session.id)}?v=${previewVersionKey}` : "";
   const finalUrl = session ? `${getEditorialFinalVideoUrl(session.id)}?v=${previewVersionKey}` : "";
   const isDone = session?.status === "DONE";
+  const isPreviewRenderingActive = isPreviewRendering || session?.status === "RENDERING_PREVIEW";
   const isRendering =
     session?.status === "RENDERING_FINAL" ||
     session?.status === "AUDIO_NORMALIZING" ||
@@ -626,12 +645,12 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
           <button
             onClick={handleRenderPreview}
-            disabled={isPreviewRendering || isRendering || isAutopilotWorking}
+            disabled={isPreviewRenderingActive || isRendering || isAutopilotWorking}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-surface hover:border-action text-action border border-line text-xs font-bold tracking-wider uppercase transition-colors disabled:opacity-50"
             title="Render ulang pratinjau video low-res"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isPreviewRendering ? "animate-spin text-action" : ""}`} />
-            <span>{isPreviewRendering ? "Merender..." : "Render Preview"}</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${isPreviewRenderingActive ? "animate-spin text-action" : ""}`} />
+            <span>{isPreviewRenderingActive ? "Merender..." : "Render Preview"}</span>
           </button>
 
           <button
@@ -791,6 +810,20 @@ export const EditorialStudio: React.FC<EditorialStudioProps> = ({
 
           {/* Video Canvas Container (9:16 Aspect Ratio) */}
           <div className="relative w-full flex-1 min-h-0 aspect-[9/16] max-h-[640px] mx-auto bg-black overflow-hidden border border-line shadow-inner flex items-center justify-center">
+            {isPreviewRenderingActive && (
+              <div className="absolute inset-0 bg-black/75 backdrop-blur-sm flex flex-col items-center justify-center gap-3 z-10 p-4 text-center">
+                <RefreshCw className="w-8 h-8 text-action animate-spin" />
+                <div>
+                  <span className="text-xs font-mono font-bold text-copy uppercase tracking-wider block">
+                    Sedang Merender Pratinjau Remotion
+                  </span>
+                  <span className="text-[10px] font-mono text-muted block mt-1">
+                    Merender frame & efek grafis di latar belakang...
+                  </span>
+                </div>
+              </div>
+            )}
+
             <video
               ref={videoRef}
               key={previewUrl}

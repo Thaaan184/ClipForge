@@ -216,7 +216,7 @@ const server = http.createServer(async (req, res) => {
         outputLocation: output_path,
         scale: 0.5, // 540x960 fast preview
         crf: 28,
-        concurrency: Math.min(concurrency, 3),
+        concurrency: Math.min(concurrency, 8),
         pixelFormat: "yuv420p",
       });
 
@@ -263,7 +263,7 @@ const server = http.createServer(async (req, res) => {
         outputLocation: output_path,
         scale: 1.0, // Full 1080x1920
         crf: 18,
-        concurrency: Math.min(concurrency, 3),
+        concurrency: Math.min(concurrency, 8),
         pixelFormat: "yuv420p",
       });
 
